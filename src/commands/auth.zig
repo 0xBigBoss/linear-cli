@@ -4,6 +4,9 @@ const graphql = @import("graphql");
 const printer = @import("printer");
 const common = @import("common");
 const builtin = @import("builtin");
+const c = @cImport({
+    @cInclude("termios.h");
+});
 
 const Allocator = std.mem.Allocator;
 
@@ -85,8 +88,7 @@ fn runSet(ctx: Context, args: [][]const u8) !u8 {
     var key: ?[]const u8 = opts.api_key;
     const stdin_file = std.fs.File.stdin();
     if (key == null and !stdin_file.isTty()) {
-        var reader = stdin_file.reader();
-        const input = reader.readAllAlloc(ctx.allocator, 64 * 1024) catch |err| {
+        const input = stdin_file.readToEndAlloc(ctx.allocator, 64 * 1024) catch |err| {
             try stderr.print("auth set: failed to read stdin: {s}\n", .{@errorName(err)});
             return 1;
         };
@@ -396,11 +398,26 @@ fn promptForApiKey(allocator: Allocator, stderr: anytype) !?[]u8 {
     };
     defer restoreEcho(stdin_file, echo_state);
 
-    var reader = stdin_file.reader();
-    const input = reader.readUntilDelimiterOrEofAlloc(allocator, '\n', 64 * 1024) catch |err| {
-        try stderr.print("auth set: failed to read key: {s}\n", .{@errorName(err)});
-        return null;
-    };
+    var input_buf = std.ArrayListUnmanaged(u8){};
+    defer input_buf.deinit(allocator);
+
+    var tmp: [256]u8 = undefined;
+    while (true) {
+        const read_len = stdin_file.read(&tmp) catch |err| {
+            try stderr.print("auth set: failed to read key: {s}\n", .{@errorName(err)});
+            return null;
+        };
+        if (read_len == 0) break;
+        const slice = tmp[0..read_len];
+        if (std.mem.indexOfScalar(u8, slice, '\n')) |idx| {
+            try input_buf.appendSlice(allocator, slice[0..idx]);
+            break;
+        }
+        try input_buf.appendSlice(allocator, slice);
+        if (input_buf.items.len >= 64 * 1024) break;
+    }
+
+    const input = try input_buf.toOwnedSlice(allocator);
 
     try prompt_writer.interface.writeByte('\n');
     return input;
@@ -410,9 +427,9 @@ fn disableEcho(file: std.fs.File) !EchoState {
     if (!file.isTty()) return .{};
     if (builtin.os.tag == .windows) return .{};
 
-    var term = try std.posix.tcgetattr(file.handle);
+    const term = try std.posix.tcgetattr(file.handle);
     var no_echo = term;
-    no_echo.lflag &= ~@as(std.posix.tcflag_t, std.posix.ECHO);
+    no_echo.lflag.ECHO = false;
     try std.posix.tcsetattr(file.handle, .FLUSH, no_echo);
     return .{ .enabled = true, .previous = term };
 }

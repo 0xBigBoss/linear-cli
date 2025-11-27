@@ -43,9 +43,14 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    var field_buf = std.BoundedArray(printer.TeamField, printer.team_field_count){};
-    const selected_fields = parseTeamFields(opts.fields, &field_buf) catch |err| {
-        try stderr.print("teams: {s}\n", .{@errorName(err)});
+    var field_buf = std.ArrayListUnmanaged(printer.TeamField){};
+    defer field_buf.deinit(ctx.allocator);
+    const selected_fields = parseTeamFields(opts.fields, &field_buf, ctx.allocator) catch |err| {
+        const message = switch (err) {
+            error.InvalidField => "invalid --fields value",
+            else => @errorName(err),
+        };
+        try stderr.print("teams: {s}\n", .{message});
         return 1;
     };
     const disable_trunc = opts.plain or opts.no_truncate;
@@ -112,7 +117,7 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    var rows = std.ArrayList(printer.TeamRow){};
+    var rows = std.ArrayListUnmanaged(printer.TeamRow){};
     defer rows.deinit(ctx.allocator);
 
     for (nodes_array.items) |node| {
@@ -180,19 +185,19 @@ pub fn usage(writer: anytype) !void {
     , .{});
 }
 
-fn parseTeamFields(raw: ?[]const u8, buffer: *std.BoundedArray(printer.TeamField, printer.team_field_count)) ![]const printer.TeamField {
+fn parseTeamFields(raw: ?[]const u8, buffer: *std.ArrayListUnmanaged(printer.TeamField), allocator: Allocator) ![]const printer.TeamField {
     if (raw) |value| {
         var iter = std.mem.tokenizeScalar(u8, value, ',');
         while (iter.next()) |field_raw| {
             const trimmed = std.mem.trim(u8, field_raw, " \t");
             if (trimmed.len == 0) continue;
             const field = parseTeamFieldName(trimmed) orelse return error.InvalidField;
-            if (!containsTeamField(buffer.slice(), field)) {
-                try buffer.append(field);
+            if (!containsTeamField(buffer.items, field)) {
+                try buffer.append(allocator, field);
             }
         }
-        if (buffer.len == 0) return error.InvalidField;
-        return buffer.slice();
+        if (buffer.items.len == 0) return error.InvalidField;
+        return buffer.items;
     }
     return printer.team_default_fields[0..];
 }

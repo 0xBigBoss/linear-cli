@@ -92,9 +92,14 @@ pub fn run(ctx: Context) !u8 {
     var stdout_buf: [0]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
     const pretty = !ctx.json_output;
-    var fields_buf = std.BoundedArray([]const u8, 32){};
-    const selected_fields = parseFields(opts.fields, &fields_buf) catch |err| {
-        try stderr.print("gql: {s}\n", .{@errorName(err)});
+    var fields_buf = std.ArrayListUnmanaged([]const u8){};
+    defer fields_buf.deinit(ctx.allocator);
+    const selected_fields = parseFields(opts.fields, &fields_buf, ctx.allocator) catch |err| {
+        const message = switch (err) {
+            error.InvalidFieldList => "invalid --fields value",
+            else => @errorName(err),
+        };
+        try stderr.print("gql: {s}\n", .{message});
         return 1;
     };
 
@@ -102,7 +107,12 @@ pub fn run(ctx: Context) !u8 {
         if (response.data()) |data_value| {
             if (selected_fields) |fields| {
                 printer.printJsonFields(data_value, &stdout_writer.interface, pretty, fields) catch |err| {
-                    try stderr.print("gql: {s}\n", .{@errorName(err)});
+                    const message = switch (err) {
+                        error.UnknownField => "requested field not found in response",
+                        error.InvalidRoot => "fields can only target objects",
+                        else => @errorName(err),
+                    };
+                    try stderr.print("gql: {s}\n", .{message});
                     return 1;
                 };
             } else {
@@ -115,7 +125,12 @@ pub fn run(ctx: Context) !u8 {
     } else {
         if (selected_fields) |fields| {
             printer.printJsonFields(response.parsed.value, &stdout_writer.interface, pretty, fields) catch |err| {
-                try stderr.print("gql: {s}\n", .{@errorName(err)});
+                const message = switch (err) {
+                    error.UnknownField => "requested field not found in response",
+                    error.InvalidRoot => "fields can only target objects",
+                    else => @errorName(err),
+                };
+                try stderr.print("gql: {s}\n", .{message});
                 return 1;
             };
         } else {
@@ -219,16 +234,16 @@ pub fn parseOptions(args: []const []const u8) !Options {
     return opts;
 }
 
-fn parseFields(raw: ?[]const u8, buffer: *std.BoundedArray([]const u8, 32)) !?[]const []const u8 {
+fn parseFields(raw: ?[]const u8, buffer: *std.ArrayListUnmanaged([]const u8), allocator: Allocator) !?[]const []const u8 {
     if (raw) |value| {
         var iter = std.mem.tokenizeScalar(u8, value, ',');
         while (iter.next()) |entry| {
             const trimmed = std.mem.trim(u8, entry, " \t");
             if (trimmed.len == 0) continue;
-            try buffer.append(trimmed);
+            try buffer.append(allocator, trimmed);
         }
-        if (buffer.len == 0) return error.InvalidFieldList;
-        return buffer.slice();
+        if (buffer.items.len == 0) return error.InvalidFieldList;
+        return buffer.items;
     }
     return null;
 }
@@ -249,7 +264,7 @@ fn readFile(allocator: Allocator, path: []const u8) ![]u8 {
 }
 
 pub fn usage(writer: anytype) !void {
-    try writer.print(
+    try writer.writeAll(
         \\Usage: linear gql [--query FILE] [--vars JSON|--vars-file FILE] [--data-only] [--operation-name NAME] [--fields LIST] [--help]
         \\Flags:
         \\  --query FILE          Read GraphQL query from a file (default: stdin)
@@ -266,5 +281,5 @@ pub fn usage(writer: anytype) !void {
         \\  linear gql --query query.graphql --vars '{\"id\":\"abc\"}'
         \\  echo \"query { viewer { id } }\" | linear gql --data-only --json
         \\
-    , .{});
+    );
 }

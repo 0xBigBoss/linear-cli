@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = std.io;
 
 pub const TableOptions = struct {
     pad: bool = true,
@@ -13,7 +14,7 @@ pub const TeamField = enum { id, key, name };
 pub const team_default_fields = [_]TeamField{ .id, .key, .name };
 pub const team_field_count = team_default_fields.len;
 
-pub fn printJson(value: std.json.Value, writer: anytype, pretty: bool) !void {
+pub fn printJson(value: std.json.Value, writer: *io.Writer, pretty: bool) !void {
     var jw = std.json.Stringify{
         .writer = writer,
         .options = .{ .whitespace = if (pretty) .indent_2 else .minified },
@@ -22,14 +23,13 @@ pub fn printJson(value: std.json.Value, writer: anytype, pretty: bool) !void {
     try writer.writeByte('\n');
 }
 
-pub fn printJsonFields(value: std.json.Value, writer: anytype, pretty: bool, fields: []const []const u8) !void {
+pub fn printJsonFields(value: std.json.Value, writer: *io.Writer, pretty: bool, fields: []const []const u8) !void {
     if (value != .object) return error.InvalidRoot;
 
     var jw = std.json.Stringify{
         .writer = writer,
         .options = .{ .whitespace = if (pretty) .indent_2 else .minified },
     };
-
     try jw.beginObject();
     for (fields) |field_name| {
         const field = value.object.get(field_name) orelse return error.UnknownField;
@@ -185,7 +185,8 @@ pub fn humanTime(allocator: std.mem.Allocator, iso: []const u8, now_override: ?i
     const now = now_override orelse std.time.timestamp();
     const diff = now - ts;
     const in_future = diff < 0;
-    const distance = std.math.absInt(diff) catch return error.InvalidTimestamp;
+    if (diff == std.math.minInt(i64)) return error.InvalidTimestamp;
+    const distance = if (diff < 0) -diff else diff;
 
     const unit_info = chooseUnit(distance);
     const suffix = if (in_future) "from now" else "ago";
@@ -199,9 +200,9 @@ const Unit = struct {
 
 fn chooseUnit(seconds: i64) Unit {
     if (seconds < 60) return .{ .value = seconds, .unit = "s" };
-    if (seconds < 3600) return .{ .value = seconds / 60, .unit = "m" };
-    if (seconds < 86400) return .{ .value = seconds / 3600, .unit = "h" };
-    return .{ .value = seconds / 86400, .unit = "d" };
+    if (seconds < 3600) return .{ .value = @divTrunc(seconds, 60), .unit = "m" };
+    if (seconds < 86400) return .{ .value = @divTrunc(seconds, 3600), .unit = "h" };
+    return .{ .value = @divTrunc(seconds, 86400), .unit = "d" };
 }
 
 fn parseIso8601Seconds(value: []const u8) !i64 {
@@ -222,7 +223,7 @@ fn parseIso8601Seconds(value: []const u8) !i64 {
     const tz_offset = try parseTimezoneOffset(tz_slice);
 
     const days = try daysSinceEpoch(year, month, day);
-    const base_seconds = (days * 86400) + hour * 3600 + minute * 60 + second;
+    const base_seconds: i64 = (days * 86400) + @as(i64, hour) * 3600 + @as(i64, minute) * 60 + @as(i64, second);
     return base_seconds - tz_offset;
 }
 

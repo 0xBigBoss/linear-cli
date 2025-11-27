@@ -82,8 +82,9 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    var field_buf = std.BoundedArray(printer.IssueField, printer.issue_field_count){};
-    const selected_fields = parseIssueFields(opts.fields, &field_buf) catch |err| {
+    var field_buf = std.ArrayListUnmanaged(printer.IssueField){};
+    defer field_buf.deinit(ctx.allocator);
+    const selected_fields = parseIssueFields(opts.fields, &field_buf, ctx.allocator) catch |err| {
         const message = switch (err) {
             error.InvalidField => "invalid --fields value",
             else => @errorName(err),
@@ -137,20 +138,20 @@ pub fn run(ctx: Context) !u8 {
     var remaining = opts.limit;
     var next_cursor = opts.cursor;
 
-    var responses = std.ArrayList(graphql.GraphqlClient.Response).init(ctx.allocator);
+    var responses = std.ArrayListUnmanaged(graphql.GraphqlClient.Response){};
     defer {
         for (responses.items) |*resp| resp.deinit();
-        responses.deinit();
+        responses.deinit(ctx.allocator);
     }
 
-    var rows = std.ArrayList(printer.IssueRow){};
+    var rows = std.ArrayListUnmanaged(printer.IssueRow){};
     defer rows.deinit(ctx.allocator);
 
-    var data_rows = std.ArrayList(DataRow){};
+    var data_rows = std.ArrayListUnmanaged(DataRow){};
     defer data_rows.deinit(ctx.allocator);
 
-    var nodes_accumulator = std.ArrayList(std.json.Value).init(ctx.allocator);
-    defer nodes_accumulator.deinit();
+    var nodes_accumulator = std.ArrayListUnmanaged(std.json.Value){};
+    defer nodes_accumulator.deinit(ctx.allocator);
 
     var total_fetched: usize = 0;
     var page_count: usize = 0;
@@ -192,7 +193,7 @@ pub fn run(ctx: Context) !u8 {
             return 1;
         };
 
-        try responses.append(response);
+        try responses.append(ctx.allocator, response);
         response_owned = false;
         const resp = &responses.items[responses.items.len - 1];
 
@@ -218,7 +219,7 @@ pub fn run(ctx: Context) !u8 {
         remaining -= take_count;
 
         if (want_raw_nodes) {
-            try nodes_accumulator.appendSlice(page_nodes);
+            try nodes_accumulator.appendSlice(ctx.allocator, page_nodes);
         }
 
         if (want_table or want_data_rows) {
@@ -303,9 +304,9 @@ pub fn run(ctx: Context) !u8 {
         var out_buf: [0]u8 = undefined;
         var out_writer = std.fs.File.stdout().writer(&out_buf);
         if (ctx.json_output) {
-            var out_array = std.json.Array.init(ctx.allocator);
+            var out_array = std.json.Array.init(var_alloc);
             for (data_rows.items) |row| {
-                var obj = std.json.Value{ .object = std.json.ObjectMap.init(ctx.allocator) };
+                var obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
                 try obj.object.put("identifier", .{ .string = row.identifier });
                 try obj.object.put("title", .{ .string = row.title });
                 try obj.object.put("state", .{ .string = row.state });
@@ -326,20 +327,20 @@ pub fn run(ctx: Context) !u8 {
             }
         }
     } else if (ctx.json_output) {
-        var nodes_value = std.json.Value{ .array = std.json.Array.init(ctx.allocator) };
+        var nodes_value = std.json.Value{ .array = std.json.Array.init(var_alloc) };
         try nodes_value.array.appendSlice(nodes_accumulator.items);
 
-        var page_info_obj = std.json.Value{ .object = std.json.ObjectMap.init(ctx.allocator) };
+        var page_info_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
         try page_info_obj.object.put("hasNextPage", .{ .bool = more_available });
         if (last_end_cursor) |cursor_value| {
             try page_info_obj.object.put("endCursor", .{ .string = cursor_value });
         }
 
-        var issues_obj = std.json.Value{ .object = std.json.ObjectMap.init(ctx.allocator) };
+        var issues_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
         try issues_obj.object.put("nodes", nodes_value);
         try issues_obj.object.put("pageInfo", page_info_obj);
 
-        var root_obj = std.json.Value{ .object = std.json.ObjectMap.init(ctx.allocator) };
+        var root_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
         try root_obj.object.put("issues", issues_obj);
 
         var out_buf: [0]u8 = undefined;
@@ -351,8 +352,9 @@ pub fn run(ctx: Context) !u8 {
         try printer.printIssueTable(ctx.allocator, &out_writer.interface, rows.items, selected_fields, table_opts);
     }
 
-    const summary_suffix = if (more_available) " (more available)" else "";
-    try stderr.print("issues list: fetched {d} issue(s) across {d} page(s){s}\n", .{ total_fetched, page_count, summary_suffix });
+    if (more_available and !ctx.json_output) {
+        try stderr.print("issues list: additional pages available (pagination not implemented)\n", .{});
+    }
 
     return 0;
 }
@@ -385,9 +387,9 @@ fn buildVariables(
     const has_state_type = opts.state_type != null;
     const has_state_id = opts.state_id != null;
     if (has_state_type) {
-        const state_values = try parseCsvValues(allocator, opts.state_type.?) catch |err| switch (err) {
-            error.EmptyList => error.InvalidStateFilter,
-            else => err,
+        const state_values = parseCsvValues(allocator, opts.state_type.?) catch |err| switch (err) {
+            error.EmptyList => return error.InvalidStateFilter,
+            else => return err,
         };
         var state_type_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
         try state_type_obj.object.put("in", .{ .array = state_values });
@@ -403,9 +405,9 @@ fn buildVariables(
     }
 
     if (has_state_id) {
-        const state_ids = try parseCsvValues(allocator, opts.state_id.?) catch |err| switch (err) {
-            error.EmptyList => error.InvalidStateIdFilter,
-            else => err,
+        const state_ids = parseCsvValues(allocator, opts.state_id.?) catch |err| switch (err) {
+            error.EmptyList => return error.InvalidStateIdFilter,
+            else => return err,
         };
         var state_id_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
         try state_id_obj.object.put("in", .{ .array = state_ids });
@@ -427,9 +429,9 @@ fn buildVariables(
     }
 
     if (opts.label) |label_value| {
-        const label_ids = try parseCsvValues(allocator, label_value) catch |err| switch (err) {
-            error.EmptyList => error.InvalidLabelFilter,
-            else => err,
+        const label_ids = parseCsvValues(allocator, label_value) catch |err| switch (err) {
+            error.EmptyList => return error.InvalidLabelFilter,
+            else => return err,
         };
         var id_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
         try id_obj.object.put("in", .{ .array = label_ids });
@@ -740,19 +742,19 @@ fn parseSort(raw: []const u8) !Sort {
     };
 }
 
-fn parseIssueFields(raw: ?[]const u8, buffer: *std.BoundedArray(printer.IssueField, printer.issue_field_count)) ![]const printer.IssueField {
+fn parseIssueFields(raw: ?[]const u8, buffer: *std.ArrayListUnmanaged(printer.IssueField), allocator: Allocator) ![]const printer.IssueField {
     if (raw) |value| {
         var iter = std.mem.tokenizeScalar(u8, value, ',');
         while (iter.next()) |field_raw| {
             const trimmed = std.mem.trim(u8, field_raw, " \t");
             if (trimmed.len == 0) continue;
             const field = parseIssueFieldName(trimmed) orelse return error.InvalidField;
-            if (!containsIssueField(buffer.slice(), field)) {
-                try buffer.append(field);
+            if (!containsIssueField(buffer.items, field)) {
+                try buffer.append(allocator, field);
             }
         }
-        if (buffer.len == 0) return error.InvalidField;
-        return buffer.slice();
+        if (buffer.items.len == 0) return error.InvalidField;
+        return buffer.items;
     }
     return printer.issue_default_fields[0..];
 }
