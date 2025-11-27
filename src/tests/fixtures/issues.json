@@ -1,0 +1,32 @@
+{
+  "data": {
+    "issues": {
+      "nodes": [
+        {
+          "id": "issue-1",
+          "identifier": "LIN-101",
+          "title": "First offline issue",
+          "state": { "name": "Todo", "type": "todo" },
+          "assignee": { "name": "Ada Lovelace" },
+          "priorityLabel": "High",
+          "updatedAt": "2024-05-10T12:00:00Z",
+          "url": "https://linear.app/example/issue/1"
+        },
+        {
+          "id": "issue-2",
+          "identifier": "LIN-102",
+          "title": "Second offline issue",
+          "state": { "name": "In Progress", "type": "in_progress" },
+          "assignee": { "name": "Grace Hopper" },
+          "priorityLabel": "Medium",
+          "updatedAt": "2024-05-11T15:30:00Z",
+          "url": "https://linear.app/example/issue/2"
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": true,
+        "endCursor": "cursor-2"
+      }
+    }
+  }
+}

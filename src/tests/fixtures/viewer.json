@@ -1,0 +1,9 @@
+{
+  "data": {
+    "viewer": {
+      "id": "user-1",
+      "name": "Offline User",
+      "email": "offline@example.com"
+    }
+  }
+}

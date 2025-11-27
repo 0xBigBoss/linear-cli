@@ -1,0 +1,1 @@
+issues list: fetched 2 items across 1 page; more available, resume with --cursor cursor-2

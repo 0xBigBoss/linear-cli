@@ -1,0 +1,10 @@
+{
+  "data": {
+    "teams": {
+      "nodes": [
+        { "id": "team-1", "key": "OPS", "name": "Operations" },
+        { "id": "team-2", "key": "APP", "name": "App Platform" }
+      ]
+    }
+  }
+}

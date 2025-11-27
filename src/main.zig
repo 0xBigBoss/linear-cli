@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const config = @import("config");
+const cli = @import("cli");
 const graphql = @import("graphql");
 const gql_command = @import("commands/gql.zig");
 const auth_command = @import("commands/auth.zig");
@@ -12,21 +13,9 @@ const issue_view_command = @import("commands/issue_view.zig");
 const issue_create_command = @import("commands/issue_create.zig");
 
 const version_string = "0.0.1-dev";
-
-const GlobalOptions = struct {
-    json: bool = false,
-    keep_alive: bool = true,
-    retries: u8 = 0,
-    timeout_ms: u32 = 10_000,
-    config_path: ?[]const u8 = null,
-    help: bool = false,
-    version: bool = false,
-};
-
-const Parsed = struct {
-    opts: GlobalOptions,
-    rest: [][]const u8,
-};
+const GlobalOptions = cli.GlobalOptions;
+const Parsed = cli.Parsed;
+const parseGlobal = cli.parseGlobal;
 
 pub fn main() !void {
     const exit_code = run() catch |err| {
@@ -204,77 +193,6 @@ fn run() !u8 {
     try stderr.print("unknown command: {s}\n", .{subcommand});
     try printUsage(stderr);
     return 1;
-}
-
-pub fn parseGlobal(args: [][]const u8) !Parsed {
-    var opts = GlobalOptions{};
-    if (args.len == 0) return .{ .opts = opts, .rest = args };
-
-    var idx: usize = 1;
-    while (idx < args.len) {
-        const arg = args[idx];
-        if (std.mem.eql(u8, arg, "--json")) {
-            opts.json = true;
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--no-keepalive") or std.mem.eql(u8, arg, "--no-keep-alive")) {
-            opts.keep_alive = false;
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            opts.help = true;
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--retries")) {
-            if (idx + 1 >= args.len) return error.MissingValue;
-            opts.retries = try std.fmt.parseUnsigned(u8, args[idx + 1], 10);
-            idx += 2;
-            continue;
-        }
-        if (std.mem.startsWith(u8, arg, "--retries=")) {
-            opts.retries = try std.fmt.parseUnsigned(u8, arg["--retries=".len..], 10);
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--timeout-ms")) {
-            if (idx + 1 >= args.len) return error.MissingValue;
-            opts.timeout_ms = try std.fmt.parseUnsigned(u32, args[idx + 1], 10);
-            idx += 2;
-            continue;
-        }
-        if (std.mem.startsWith(u8, arg, "--timeout-ms=")) {
-            opts.timeout_ms = try std.fmt.parseUnsigned(u32, arg["--timeout-ms=".len..], 10);
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--version")) {
-            opts.version = true;
-            idx += 1;
-            continue;
-        }
-        if (std.mem.startsWith(u8, arg, "--config=")) {
-            opts.config_path = arg["--config=".len..];
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--config")) {
-            if (idx + 1 >= args.len) return error.MissingValue;
-            opts.config_path = args[idx + 1];
-            idx += 2;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--")) {
-            idx += 1;
-            break;
-        }
-        if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
-        break;
-    }
-
-    return .{ .opts = opts, .rest = args[idx..] };
 }
 
 fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {

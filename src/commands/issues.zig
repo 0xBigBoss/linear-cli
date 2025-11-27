@@ -352,8 +352,17 @@ pub fn run(ctx: Context) !u8 {
         try printer.printIssueTable(ctx.allocator, &out_writer.interface, rows.items, selected_fields, table_opts);
     }
 
-    if (more_available and !ctx.json_output) {
-        try stderr.print("issues list: additional pages available (pagination not implemented)\n", .{});
+    if (!ctx.json_output) {
+        const plural = if (page_count == 1) "" else "s";
+        if (more_available) {
+            const cursor_value = last_end_cursor orelse "(unknown)";
+            try stderr.print(
+                "issues list: fetched {d} items across {d} page{s}; more available, resume with --cursor {s}\n",
+                .{ total_fetched, page_count, plural, cursor_value },
+            );
+        } else {
+            try stderr.print("issues list: fetched {d} items across {d} page{s}\n", .{ total_fetched, page_count, plural });
+        }
     }
 
     return 0;

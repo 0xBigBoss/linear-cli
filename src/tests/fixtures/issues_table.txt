@@ -1,0 +1,3 @@
+Identifier  Title                 State        Assignee      Priority  Updated             
+LIN-101     First offline issue   Todo         Ada Lovelace  High      2024-05-10T12:00:00Z
+LIN-102     Second offline issue  In Progress  Grace Hopper  Medium    2024-05-11T15:30:00Z

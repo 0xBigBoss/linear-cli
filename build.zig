@@ -8,6 +8,12 @@ pub fn build(b: *std.Build) void {
     const git_hash = detectGitHash(b.allocator);
     build_options.addOption([]const u8, "git_hash", git_hash);
 
+    const cli_mod = b.createModule(.{
+        .root_source_file = b.path("src/cli.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe = b.addExecutable(.{
         .name = "linear",
         .root_module = b.createModule(.{
@@ -17,6 +23,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addOptions("build_options", build_options);
+    exe.root_module.addImport("cli", cli_mod);
     b.installArtifact(exe);
 
     const tests = b.addTest(.{
@@ -43,7 +50,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    graphql_mock_mod.addImport("graphql_real", graphql_mod);
     const printer_mod = b.createModule(.{
         .root_source_file = b.path("src/print.zig"),
         .target = target,
@@ -63,6 +69,11 @@ pub fn build(b: *std.Build) void {
     });
     common_test_mod.addImport("config", config_mod);
     common_test_mod.addImport("graphql", graphql_mock_mod);
+    const app_main_stub = b.createModule(.{
+        .root_source_file = b.path("src/tests/app_main_stub.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     exe.root_module.addImport("config", config_mod);
     exe.root_module.addImport("graphql", graphql_mod);
@@ -71,12 +82,12 @@ pub fn build(b: *std.Build) void {
 
     const tests_mod = tests.root_module;
     tests_mod.addImport("config", config_mod);
-    tests_mod.addImport("graphql", graphql_mock_mod);
-    tests_mod.addImport("graphql_real", graphql_mod);
+    tests_mod.addImport("graphql", graphql_mod);
     tests_mod.addImport("graphql_mock", graphql_mock_mod);
     tests_mod.addImport("printer", printer_mod);
     tests_mod.addImport("common", common_test_mod);
-    tests_mod.addImport("app_main", exe.root_module);
+    tests_mod.addImport("cli", cli_mod);
+    tests_mod.addImport("app_main", app_main_stub);
 
     const gql_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/gql.zig"),
