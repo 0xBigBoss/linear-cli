@@ -11,6 +11,8 @@ pub const Context = struct {
     config: *config.Config,
     args: [][]const u8,
     json_output: bool,
+    retries: u8,
+    timeout_ms: u32,
 };
 
 const Options = struct {
@@ -40,6 +42,8 @@ pub fn run(ctx: Context) !u8 {
 
     var client = graphql.GraphqlClient.init(ctx.allocator, api_key);
     defer client.deinit();
+    client.max_retries = ctx.retries;
+    client.timeout_ms = ctx.timeout_ms;
 
     const query =
         \\query Viewer {
@@ -60,7 +64,7 @@ pub fn run(ctx: Context) !u8 {
     };
     defer response.deinit();
 
-    common.checkResponse("me", &response, stderr) catch {
+    common.checkResponse("me", &response, stderr, api_key) catch {
         return 1;
     };
 
@@ -89,7 +93,7 @@ pub fn run(ctx: Context) !u8 {
 
     var out_buf: [0]u8 = undefined;
     var out_writer = std.fs.File.stdout().writer(&out_buf);
-    try printer.printUserTable(ctx.allocator, &out_writer.interface, &.{row});
+    try printer.printUserTable(ctx.allocator, &out_writer.interface, &.{row}, .{});
     return 0;
 }
 
@@ -109,11 +113,13 @@ fn parseOptions(args: [][]const u8) !Options {
     return opts;
 }
 
-fn usage(writer: anytype) !void {
+pub fn usage(writer: anytype) !void {
     try writer.print(
         \\Usage: linear me [--help]
         \\Flags:
         \\  --help    Show this help message
+        \\Examples:
+        \\  linear me --json
         \\
     , .{});
 }

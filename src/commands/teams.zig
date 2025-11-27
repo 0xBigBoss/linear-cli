@@ -11,9 +11,14 @@ pub const Context = struct {
     config: *config.Config,
     args: [][]const u8,
     json_output: bool,
+    retries: u8,
+    timeout_ms: u32,
 };
 
 const Options = struct {
+    fields: ?[]const u8 = null,
+    plain: bool = false,
+    no_truncate: bool = false,
     help: bool = false,
 };
 
@@ -38,6 +43,17 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
+    var field_buf = std.BoundedArray(printer.TeamField, printer.team_field_count){};
+    const selected_fields = parseTeamFields(opts.fields, &field_buf) catch |err| {
+        try stderr.print("teams: {s}\n", .{@errorName(err)});
+        return 1;
+    };
+    const disable_trunc = opts.plain or opts.no_truncate;
+    const table_opts = printer.TableOptions{
+        .pad = !disable_trunc,
+        .truncate = !disable_trunc,
+    };
+
     var arena = std.heap.ArenaAllocator.init(ctx.allocator);
     defer arena.deinit();
     const var_alloc = arena.allocator();
@@ -59,6 +75,8 @@ pub fn run(ctx: Context) !u8 {
 
     var client = graphql.GraphqlClient.init(ctx.allocator, api_key);
     defer client.deinit();
+    client.max_retries = ctx.retries;
+    client.timeout_ms = ctx.timeout_ms;
 
     var response = common.send("teams", &client, ctx.allocator, .{
         .query = query,
@@ -69,7 +87,7 @@ pub fn run(ctx: Context) !u8 {
     };
     defer response.deinit();
 
-    common.checkResponse("teams", &response, stderr) catch {
+    common.checkResponse("teams", &response, stderr, api_key) catch {
         return 1;
     };
 
@@ -107,7 +125,7 @@ pub fn run(ctx: Context) !u8 {
 
     var out_buf: [0]u8 = undefined;
     var out_writer = std.fs.File.stdout().writer(&out_buf);
-    try printer.printTeamTable(ctx.allocator, &out_writer.interface, rows.items);
+    try printer.printTeamTable(ctx.allocator, &out_writer.interface, rows.items, selected_fields, table_opts);
     return 0;
 }
 
@@ -121,17 +139,74 @@ fn parseOptions(args: [][]const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--fields")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.fields = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--fields=")) {
+            opts.fields = arg["--fields=".len..];
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--plain")) {
+            opts.plain = true;
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--no-truncate")) {
+            opts.no_truncate = true;
+            idx += 1;
+            continue;
+        }
         if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
         return error.UnexpectedArgument;
     }
     return opts;
 }
 
-fn usage(writer: anytype) !void {
+pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear teams list [--help]
+        \\Usage: linear teams list [--fields LIST] [--plain] [--no-truncate] [--help]
         \\Flags:
-        \\  --help    Show this help message
+        \\  --fields LIST   Comma-separated columns (id,key,name)
+        \\  --plain         Do not pad or truncate table cells
+        \\  --no-truncate   Disable ellipsis and padding in table cells
+        \\  --help          Show this help message
+        \\Examples:
+        \\  linear teams list --fields id,key
         \\
     , .{});
+}
+
+fn parseTeamFields(raw: ?[]const u8, buffer: *std.BoundedArray(printer.TeamField, printer.team_field_count)) ![]const printer.TeamField {
+    if (raw) |value| {
+        var iter = std.mem.tokenizeScalar(u8, value, ',');
+        while (iter.next()) |field_raw| {
+            const trimmed = std.mem.trim(u8, field_raw, " \t");
+            if (trimmed.len == 0) continue;
+            const field = parseTeamFieldName(trimmed) orelse return error.InvalidField;
+            if (!containsTeamField(buffer.slice(), field)) {
+                try buffer.append(field);
+            }
+        }
+        if (buffer.len == 0) return error.InvalidField;
+        return buffer.slice();
+    }
+    return printer.team_default_fields[0..];
+}
+
+fn parseTeamFieldName(name: []const u8) ?printer.TeamField {
+    if (std.ascii.eqlIgnoreCase(name, "id")) return .id;
+    if (std.ascii.eqlIgnoreCase(name, "key")) return .key;
+    if (std.ascii.eqlIgnoreCase(name, "name")) return .name;
+    return null;
+}
+
+fn containsTeamField(haystack: []const printer.TeamField, needle: printer.TeamField) bool {
+    for (haystack) |entry| {
+        if (entry == needle) return true;
+    }
+    return false;
 }

@@ -16,6 +16,8 @@ const version_string = "0.0.1-dev";
 const GlobalOptions = struct {
     json: bool = false,
     keep_alive: bool = true,
+    retries: u8 = 0,
+    timeout_ms: u32 = 10_000,
     config_path: ?[]const u8 = null,
     help: bool = false,
     version: bool = false,
@@ -105,6 +107,8 @@ fn run() !u8 {
             .config = &cfg,
             .args = sub_args,
             .json_output = json_output,
+            .retries = opts.retries,
+            .timeout_ms = opts.timeout_ms,
         });
     }
 
@@ -115,6 +119,8 @@ fn run() !u8 {
             .args = sub_args,
             .json_output = json_output,
             .config_path = opts.config_path,
+            .retries = opts.retries,
+            .timeout_ms = opts.timeout_ms,
         });
     }
 
@@ -124,6 +130,8 @@ fn run() !u8 {
             .config = &cfg,
             .args = sub_args,
             .json_output = json_output,
+            .retries = opts.retries,
+            .timeout_ms = opts.timeout_ms,
         });
     }
 
@@ -138,6 +146,8 @@ fn run() !u8 {
             .config = &cfg,
             .args = sub_args[1..],
             .json_output = json_output,
+            .retries = opts.retries,
+            .timeout_ms = opts.timeout_ms,
         });
     }
 
@@ -152,6 +162,8 @@ fn run() !u8 {
             .config = &cfg,
             .args = sub_args[1..],
             .json_output = json_output,
+            .retries = opts.retries,
+            .timeout_ms = opts.timeout_ms,
         });
     }
 
@@ -169,6 +181,8 @@ fn run() !u8 {
                 .config = &cfg,
                 .args = issue_args,
                 .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
             });
         }
         if (std.mem.eql(u8, issue_sub, "create")) {
@@ -177,6 +191,8 @@ fn run() !u8 {
                 .config = &cfg,
                 .args = issue_args,
                 .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
             });
         }
 
@@ -212,6 +228,28 @@ pub fn parseGlobal(args: [][]const u8) !Parsed {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--retries")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.retries = try std.fmt.parseUnsigned(u8, args[idx + 1], 10);
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--retries=")) {
+            opts.retries = try std.fmt.parseUnsigned(u8, arg["--retries=".len..], 10);
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--timeout-ms")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.timeout_ms = try std.fmt.parseUnsigned(u32, args[idx + 1], 10);
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--timeout-ms=")) {
+            opts.timeout_ms = try std.fmt.parseUnsigned(u32, arg["--timeout-ms=".len..], 10);
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--version")) {
             opts.version = true;
             idx += 1;
@@ -239,11 +277,85 @@ pub fn parseGlobal(args: [][]const u8) !Parsed {
     return .{ .opts = opts, .rest = args[idx..] };
 }
 
+fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
+    var out_buf: [0]u8 = undefined;
+    var out_writer = std.fs.File.stdout().writer(&out_buf);
+    const out = &out_writer.interface;
+
+    if (args.len == 0) {
+        try printUsage(out);
+        return 0;
+    }
+
+    const target = args[0];
+    const tail = args[1..];
+
+    if (std.mem.eql(u8, target, "auth")) {
+        if (tail.len > 0) {
+            if (std.mem.eql(u8, tail[0], "set")) {
+                try auth_command.setUsage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "test")) {
+                try auth_command.testUsage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "show")) {
+                try auth_command.showUsage(out);
+                return 0;
+            }
+        }
+        try auth_command.usage(out);
+        return 0;
+    }
+
+    if (std.mem.eql(u8, target, "me")) {
+        try me_command.usage(out);
+        return 0;
+    }
+
+    if (std.mem.eql(u8, target, "teams")) {
+        try teams_command.usage(out);
+        return 0;
+    }
+
+    if (std.mem.eql(u8, target, "issues")) {
+        try issues_command.usage(out);
+        return 0;
+    }
+
+    if (std.mem.eql(u8, target, "issue")) {
+        if (tail.len > 0) {
+            if (std.mem.eql(u8, tail[0], "view")) {
+                try issue_view_command.usage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "create")) {
+                try issue_create_command.usage(out);
+                return 0;
+            }
+        }
+        try issue_view_command.usage(out);
+        try out.writeByte('\n');
+        try issue_create_command.usage(out);
+        return 0;
+    }
+
+    if (std.mem.eql(u8, target, "gql")) {
+        try gql_command.usage(out);
+        return 0;
+    }
+
+    try stderr.print("help: unknown command: {s}\n", .{target});
+    try printUsage(stderr);
+    return 1;
+}
+
 fn printUsage(writer: anytype) !void {
     try writer.print(
-        \\linear [--json] [--config PATH] [--no-keepalive] [--help] [--version] <command> [args]
+        \\linear [--json] [--config PATH] [--no-keepalive] [--retries N] [--timeout-ms MS] [--help] [--version] <command> [args]
         \\Commands:
-        \\  auth set|test        Manage or validate authentication
+        \\  auth set|test|show   Manage or validate authentication
         \\  me                   Show current user
         \\  teams list           List teams
         \\  issues list          List issues

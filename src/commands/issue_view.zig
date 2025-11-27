@@ -11,6 +11,8 @@ pub const Context = struct {
     config: *config.Config,
     args: [][]const u8,
     json_output: bool,
+    retries: u8,
+    timeout_ms: u32,
 };
 
 const Options = struct {
@@ -18,6 +20,7 @@ const Options = struct {
     help: bool = false,
     quiet: bool = false,
     data_only: bool = false,
+    human_time: bool = false,
 };
 
 pub fn run(ctx: Context) !u8 {
@@ -72,6 +75,8 @@ pub fn run(ctx: Context) !u8 {
 
     var client = graphql.GraphqlClient.init(ctx.allocator, api_key);
     defer client.deinit();
+    client.max_retries = ctx.retries;
+    client.timeout_ms = ctx.timeout_ms;
 
     var response = common.send("issue view", &client, ctx.allocator, .{
         .query = query,
@@ -114,8 +119,16 @@ pub fn run(ctx: Context) !u8 {
     const assignee_value = assignee_name orelse "(unassigned)";
     const priority = common.getStringField(node, "priorityLabel") orelse "";
     const url = common.getStringField(node, "url") orelse "";
-    const created = common.getStringField(node, "createdAt") orelse "";
-    const updated = common.getStringField(node, "updatedAt") orelse "";
+    const created_raw = common.getStringField(node, "createdAt") orelse "";
+    const updated_raw = common.getStringField(node, "updatedAt") orelse "";
+    const created = if (opts.human_time)
+        printer.humanTime(ctx.allocator, created_raw, null) catch created_raw
+    else
+        created_raw;
+    const updated = if (opts.human_time)
+        printer.humanTime(ctx.allocator, updated_raw, null) catch updated_raw
+    else
+        updated_raw;
     const description = common.getStringField(node, "description");
 
     const pairs = [_]printer.KeyValue{
@@ -209,6 +222,11 @@ fn parseOptions(args: [][]const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--human-time")) {
+            opts.human_time = true;
+            idx += 1;
+            continue;
+        }
         if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
         if (opts.identifier == null) {
             opts.identifier = arg;
@@ -220,13 +238,17 @@ fn parseOptions(args: [][]const u8) !Options {
     return opts;
 }
 
-fn usage(writer: anytype) !void {
+pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue view <ID|IDENTIFIER> [--quiet] [--data-only] [--help]
+        \\Usage: linear issue view <ID|IDENTIFIER> [--quiet] [--data-only] [--human-time] [--help]
         \\Flags:
         \\  --quiet        Print only the identifier
         \\  --data-only    Emit tab-separated fields without formatting (or JSON object with --json)
+        \\  --human-time   Render timestamps as relative values
         \\  --help         Show this help message
+        \\Examples:
+        \\  linear issue view ENG-123
+        \\  linear issue view 12345 --data-only --json
         \\
     , .{});
 }

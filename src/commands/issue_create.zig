@@ -11,6 +11,8 @@ pub const Context = struct {
     config: *config.Config,
     args: [][]const u8,
     json_output: bool,
+    retries: u8,
+    timeout_ms: u32,
 };
 
 const Options = struct {
@@ -63,6 +65,8 @@ pub fn run(ctx: Context) !u8 {
 
     var client = graphql.GraphqlClient.init(ctx.allocator, api_key);
     defer client.deinit();
+    client.max_retries = ctx.retries;
+    client.timeout_ms = ctx.timeout_ms;
 
     const team_id = resolveTeamId(ctx, &client, opts.team.?, stderr) catch |err| {
         try stderr.print("issue create: {s}\n", .{@errorName(err)});
@@ -217,6 +221,10 @@ fn resolveTeamId(ctx: Context, client: *graphql.GraphqlClient, value: []const u8
         return .{ .value = value, .owned = false };
     }
 
+    if (ctx.config.lookupTeamId(value)) |cached| {
+        return .{ .value = cached, .owned = false };
+    }
+
     var arena = std.heap.ArenaAllocator.init(ctx.allocator);
     defer arena.deinit();
     const var_alloc = arena.allocator();
@@ -247,7 +255,7 @@ fn resolveTeamId(ctx: Context, client: *graphql.GraphqlClient, value: []const u8
     };
     defer response.deinit();
 
-    common.checkResponse("issue create", &response, stderr, api_key) catch {
+    common.checkResponse("issue create", &response, stderr, client.api_key) catch {
         return error.InvalidTeam;
     };
 
@@ -258,6 +266,21 @@ fn resolveTeamId(ctx: Context, client: *graphql.GraphqlClient, value: []const u8
     const node = nodes_array.items[0];
     if (node != .object) return error.InvalidTeam;
     const id_value = common.getStringField(node, "id") orelse return error.InvalidTeam;
+
+    const updated = ctx.config.cacheTeamId(value, id_value) catch |err| blk: {
+        try stderr.print("issue create: warning: failed to cache team id: {s}\n", .{@errorName(err)});
+        break :blk false;
+    };
+    if (updated) {
+        ctx.config.save(ctx.allocator, null) catch |err| {
+            try stderr.print("issue create: warning: failed to persist team cache: {s}\n", .{@errorName(err)});
+        };
+        if (ctx.config.lookupTeamId(value)) |cached| {
+            return .{ .value = cached, .owned = false };
+        }
+    } else if (ctx.config.lookupTeamId(value)) |cached| {
+        return .{ .value = cached, .owned = false };
+    }
 
     const duped = try ctx.allocator.dupe(u8, id_value);
     return .{ .value = duped, .owned = true };
@@ -375,7 +398,7 @@ pub fn parseOptions(args: []const []const u8) !Options {
     return opts;
 }
 
-fn usage(writer: anytype) !void {
+pub fn usage(writer: anytype) !void {
     try writer.print(
         \\Usage: linear issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--quiet] [--data-only] [--help]
         \\Flags:
@@ -389,6 +412,9 @@ fn usage(writer: anytype) !void {
         \\  --quiet              Print only the identifier
         \\  --data-only          Emit tab-separated fields without formatting (or JSON object with --json)
         \\  --help               Show this help message
+        \\Examples:
+        \\  linear issue create --team ENG --title \"Fix bug\" --priority 2
+        \\  linear issue create --team ENG --title \"API error\" --labels abc,def --quiet
         \\
     , .{});
 }

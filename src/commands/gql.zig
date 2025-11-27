@@ -11,6 +11,8 @@ pub const Context = struct {
     config: *config.Config,
     args: [][]const u8,
     json_output: bool,
+    retries: u8,
+    timeout_ms: u32,
 };
 
 const Options = struct {
@@ -19,6 +21,7 @@ const Options = struct {
     vars_file: ?[]const u8 = null,
     data_only: bool = false,
     operation_name: ?[]const u8 = null,
+    fields: ?[]const u8 = null,
     help: bool = false,
 };
 
@@ -74,6 +77,8 @@ pub fn run(ctx: Context) !u8 {
 
     var client = graphql.GraphqlClient.init(ctx.allocator, api_key);
     defer client.deinit();
+    client.max_retries = ctx.retries;
+    client.timeout_ms = ctx.timeout_ms;
 
     var response = common.send("gql", &client, ctx.allocator, .{
         .query = query,
@@ -87,16 +92,35 @@ pub fn run(ctx: Context) !u8 {
     var stdout_buf: [0]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
     const pretty = !ctx.json_output;
+    var fields_buf = std.BoundedArray([]const u8, 32){};
+    const selected_fields = parseFields(opts.fields, &fields_buf) catch |err| {
+        try stderr.print("gql: {s}\n", .{@errorName(err)});
+        return 1;
+    };
 
     if (opts.data_only) {
         if (response.data()) |data_value| {
-            try printer.printJson(data_value, &stdout_writer.interface, pretty);
+            if (selected_fields) |fields| {
+                printer.printJsonFields(data_value, &stdout_writer.interface, pretty, fields) catch |err| {
+                    try stderr.print("gql: {s}\n", .{@errorName(err)});
+                    return 1;
+                };
+            } else {
+                try printer.printJson(data_value, &stdout_writer.interface, pretty);
+            }
         } else {
             try stderr.print("gql: response did not include a data field\n", .{});
             return 1;
         }
     } else {
-        try printer.printJson(response.parsed.value, &stdout_writer.interface, pretty);
+        if (selected_fields) |fields| {
+            printer.printJsonFields(response.parsed.value, &stdout_writer.interface, pretty, fields) catch |err| {
+                try stderr.print("gql: {s}\n", .{@errorName(err)});
+                return 1;
+            };
+        } else {
+            try printer.printJson(response.parsed.value, &stdout_writer.interface, pretty);
+        }
     }
 
     if (!response.isSuccessStatus()) {
@@ -165,6 +189,17 @@ pub fn parseOptions(args: []const []const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--fields")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.fields = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--fields=")) {
+            opts.fields = arg["--fields=".len..];
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--operation-name")) {
             if (idx + 1 >= args.len) return error.MissingValue;
             opts.operation_name = args[idx + 1];
@@ -184,6 +219,20 @@ pub fn parseOptions(args: []const []const u8) !Options {
     return opts;
 }
 
+fn parseFields(raw: ?[]const u8, buffer: *std.BoundedArray([]const u8, 32)) !?[]const []const u8 {
+    if (raw) |value| {
+        var iter = std.mem.tokenizeScalar(u8, value, ',');
+        while (iter.next()) |entry| {
+            const trimmed = std.mem.trim(u8, entry, " \t");
+            if (trimmed.len == 0) continue;
+            try buffer.append(trimmed);
+        }
+        if (buffer.len == 0) return error.InvalidFieldList;
+        return buffer.slice();
+    }
+    return null;
+}
+
 fn loadQuery(allocator: Allocator, path: ?[]const u8) ![]u8 {
     if (path) |query_path| {
         return readFile(allocator, query_path);
@@ -199,19 +248,23 @@ fn readFile(allocator: Allocator, path: []const u8) ![]u8 {
     return file.readToEndAlloc(allocator, 1024 * 1024);
 }
 
-fn usage(writer: anytype) !void {
+pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear gql [--query FILE] [--vars JSON|--vars-file FILE] [--data-only] [--operation-name NAME] [--help]
+        \\Usage: linear gql [--query FILE] [--vars JSON|--vars-file FILE] [--data-only] [--operation-name NAME] [--fields LIST] [--help]
         \\Flags:
         \\  --query FILE          Read GraphQL query from a file (default: stdin)
         \\  --vars JSON           Inline JSON variables
         \\  --vars-file FILE      Load JSON variables from a file
         \\  --data-only           Print only the data payload
         \\  --operation-name NAME Set GraphQL operationName
+        \\  --fields LIST         Comma-separated top-level fields to include in the output
         \\  --help                Show this help message
         \\
         \\Environment:
         \\  LINEAR_API_KEY        Overrides api_key from config when present
+        \\Examples:
+        \\  linear gql --query query.graphql --vars '{\"id\":\"abc\"}'
+        \\  echo \"query { viewer { id } }\" | linear gql --data-only --json
         \\
     , .{});
 }
