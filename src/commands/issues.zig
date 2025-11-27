@@ -84,7 +84,11 @@ pub fn run(ctx: Context) !u8 {
 
     var field_buf = std.BoundedArray(printer.IssueField, printer.issue_field_count){};
     const selected_fields = parseIssueFields(opts.fields, &field_buf) catch |err| {
-        try stderr.print("issues list: {s}\n", .{@errorName(err)});
+        const message = switch (err) {
+            error.InvalidField => "invalid --fields value",
+            else => @errorName(err),
+        };
+        try stderr.print("issues list: {s}\n", .{message});
         return 1;
     };
     const disable_trunc = opts.plain or opts.no_truncate;
