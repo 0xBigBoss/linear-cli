@@ -1,5 +1,8 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const build_options = @import("build_options");
 const config = @import("config");
+const graphql = @import("graphql");
 const gql_command = @import("commands/gql.zig");
 const auth_command = @import("commands/auth.zig");
 const me_command = @import("commands/me.zig");
@@ -12,6 +15,7 @@ const version_string = "0.0.1-dev";
 
 const GlobalOptions = struct {
     json: bool = false,
+    keep_alive: bool = true,
     config_path: ?[]const u8 = null,
     help: bool = false,
     version: bool = false,
@@ -38,6 +42,8 @@ fn run() !u8 {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    defer graphql.deinitSharedClient();
+
     const args_raw = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args_raw);
 
@@ -60,9 +66,15 @@ fn run() !u8 {
     };
     const opts = parsed.opts;
 
+    graphql.setDefaultKeepAlive(opts.keep_alive);
+
     if (opts.version) {
         try printVersion();
         return 0;
+    }
+
+    if (parsed.rest.len > 0 and std.mem.eql(u8, parsed.rest[0], "help")) {
+        return routeHelp(parsed.rest[1..], stderr);
     }
 
     if (opts.help or parsed.rest.len == 0) {
@@ -77,6 +89,10 @@ fn run() !u8 {
         return 1;
     };
     defer cfg.deinit();
+    if (cfg.permissions_warning) {
+        const path = cfg.config_path orelse "(unknown)";
+        try stderr.print("warning: config file {s} permissions should be 0600\n", .{path});
+    }
 
     const json_output = opts.json or std.ascii.eqlIgnoreCase(cfg.default_output, "json");
 
@@ -186,6 +202,11 @@ pub fn parseGlobal(args: [][]const u8) !Parsed {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--no-keepalive") or std.mem.eql(u8, arg, "--no-keep-alive")) {
+            opts.keep_alive = false;
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             opts.help = true;
             idx += 1;
@@ -220,7 +241,7 @@ pub fn parseGlobal(args: [][]const u8) !Parsed {
 
 fn printUsage(writer: anytype) !void {
     try writer.print(
-        \\linear [--json] [--config PATH] [--help] [--version] <command> [args]
+        \\linear [--json] [--config PATH] [--no-keepalive] [--help] [--version] <command> [args]
         \\Commands:
         \\  auth set|test        Manage or validate authentication
         \\  me                   Show current user
@@ -229,7 +250,11 @@ fn printUsage(writer: anytype) !void {
         \\  issue view|create    View or create an issue
         \\  gql                  Run an arbitrary GraphQL query against Linear
         \\
-        \\Use 'linear <command> --help' for command-specific help.
+        \\Use 'linear help <command>' for command-specific help and examples.
+        \\Examples:
+        \\  linear help issues
+        \\  linear issues list --pages 2 --limit 50
+        \\  linear issue view ENG-123 --json
         \\
     , .{});
 }
@@ -237,5 +262,7 @@ fn printUsage(writer: anytype) !void {
 fn printVersion() !void {
     var buf: [0]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&buf);
-    try stdout_writer.interface.print("linear {s}\n", .{version_string});
+    const mode_label = @tagName(builtin.mode);
+    const git_hash = build_options.git_hash;
+    try stdout_writer.interface.print("linear {s} (git {s}, {s})\n", .{ version_string, git_hash, mode_label });
 }
