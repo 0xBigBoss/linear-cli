@@ -89,20 +89,25 @@ test "parse gql options" {
 }
 
 test "parse issues options" {
-    const args = [_][]const u8{ "--team", "TEAM", "--state", "todo,in_progress", "--limit", "5" };
+    const args = [_][]const u8{ "--team", "TEAM", "--state", "todo,in_progress", "--limit", "5", "--cursor", "abc", "--pages", "2" };
     const opts = try issues.parseOptions(args[0..]);
     try std.testing.expectEqualStrings("TEAM", opts.team.?);
     try std.testing.expectEqual(@as(usize, 5), opts.limit);
     try std.testing.expect(opts.state != null);
+    try std.testing.expectEqualStrings("abc", opts.cursor.?);
+    try std.testing.expectEqual(@as(usize, 2), opts.pages.?);
+    try std.testing.expect(!opts.all);
 }
 
 test "parse issue create options" {
-    const args = [_][]const u8{ "--team", "team-1", "--title", "hello", "--priority", "2", "--labels", "a,b" };
+    const args = [_][]const u8{ "--team", "team-1", "--title", "hello", "--priority", "2", "--labels", "a,b", "--quiet", "--data-only" };
     const opts = try issue_create.parseOptions(args[0..]);
     try std.testing.expectEqualStrings("team-1", opts.team.?);
     try std.testing.expectEqualStrings("hello", opts.title.?);
     try std.testing.expect(opts.priority.? == 2);
     try std.testing.expect(opts.labels != null);
+    try std.testing.expect(opts.quiet);
+    try std.testing.expect(opts.data_only);
 }
 
 test "printer issue table includes headers" {
@@ -127,6 +132,32 @@ test "printer issue table includes headers" {
     try std.testing.expect(std.mem.indexOf(u8, output, "ISS-1") != null);
 }
 
+test "printer key values plain includes trailing newline" {
+    const allocator = std.testing.allocator;
+    var buffer = std.ArrayList(u8){};
+    defer buffer.deinit(allocator);
+
+    const pairs = [_]printer.KeyValue{
+        .{ .key = "id", .value = "ISS-1" },
+        .{ .key = "title", .value = "Example" },
+    };
+
+    try printer.printKeyValuesPlain(buffer.writer(allocator), pairs[0..]);
+    try std.testing.expectEqualStrings("id\tISS-1\ntitle\tExample\n", buffer.items);
+}
+
+test "parse issues all without pages" {
+    const args = [_][]const u8{"--all"};
+    const opts = try issues.parseOptions(args[0..]);
+    try std.testing.expect(opts.all);
+    try std.testing.expect(opts.pages == null);
+}
+
+test "parse issues pages/all conflict" {
+    const args = [_][]const u8{ "--pages", "1", "--all" };
+    try std.testing.expectError(error.ConflictingPageFlags, issues.parseOptions(args[0..]));
+}
+
 fn setEnvValue(value: []const u8, allocator: std.mem.Allocator) !void {
     var buf = try allocator.alloc(u8, value.len + 1);
     defer allocator.free(buf);
@@ -139,6 +170,48 @@ fn clearEnv() void {
     _ = c.unsetenv(env_name_z.ptr);
 }
 
+test "graphql client reuses shared http client across instances" {
+    const allocator = std.testing.allocator;
+
+    var first = graphql.GraphqlClient.init(allocator, "test-key");
+    const first_http = first.http_client;
+    first.deinit();
+
+    defer graphql.deinitSharedClient();
+    var second = graphql.GraphqlClient.init(allocator, "test-key");
+    defer second.deinit();
+
+    try std.testing.expect(first_http == second.http_client);
+}
+
+test "graphql client refreshes tls certs when reused" {
+    const allocator = std.testing.allocator;
+
+    var first = graphql.GraphqlClient.init(allocator, "test-key");
+    const shared = first.http_client;
+    @atomicStore(bool, &shared.next_https_rescan_certs, false, .release);
+    first.deinit();
+
+    defer graphql.deinitSharedClient();
+    var second = graphql.GraphqlClient.init(allocator, "test-key");
+    defer second.deinit();
+
+    try std.testing.expect(@atomicLoad(bool, &second.http_client.next_https_rescan_certs, .acquire));
+}
+
+test "graphql client uses configured keep alive setting" {
+    const allocator = std.testing.allocator;
+    const previous = graphql.getDefaultKeepAlive();
+    graphql.setDefaultKeepAlive(false);
+    defer graphql.setDefaultKeepAlive(previous);
+    defer graphql.deinitSharedClient();
+
+    var client = graphql.GraphqlClient.init(allocator, "test-key");
+    defer client.deinit();
+
+    try std.testing.expect(!client.keep_alive);
+}
+
 test "online viewer smoke (env gated)" {
     const allocator = std.testing.allocator;
     const run_online = std.process.getEnvVarOwned(allocator, "LINEAR_ONLINE_TESTS") catch null;
@@ -149,6 +222,7 @@ test "online viewer smoke (env gated)" {
     defer if (api_key) |val| allocator.free(val);
     if (api_key == null) return;
 
+    defer graphql.deinitSharedClient();
     var client = graphql.GraphqlClient.init(allocator, api_key.?);
     defer client.deinit();
 

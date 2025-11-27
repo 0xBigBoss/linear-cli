@@ -24,14 +24,14 @@ Commands:
 - `auth test` — ping `viewer` to validate the key.
 - `me` — show current user.
 - `teams list` — list team id/key/name.
-- `issues list [--team ID|KEY] [--state TYPES] [--limit N]` — defaults to config team; excludes completed/canceled unless `--state` is provided. Emits a hint if more pages exist (pagination stub).
-- `issue view <ID|IDENTIFIER>` — show a single issue with description and timestamps.
-- `issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID]` — resolves team key to id when needed; returns identifier/url.
+- `issues list [--team ID|KEY] [--state TYPES] [--limit N] [--cursor CURSOR] [--pages N|--all]` — defaults to config team; excludes completed/canceled unless `--state` is provided. Supports cursor pagination with page summaries and respects `--limit` as the total fetch cap.
+- `issue view <ID|IDENTIFIER> [--quiet] [--data-only]` — show a single issue with description and timestamps; `--quiet` prints only the identifier, `--data-only` emits tab-separated fields (or JSON when `--json`).
+- `issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--quiet] [--data-only]` — resolves team key to id when needed; `--quiet` prints only the identifier, `--data-only` emits tab-separated fields (or JSON when `--json`).
 - `gql [--query FILE] [--vars JSON|--vars-file FILE] [--operation-name NAME] [--data-only]` — arbitrary GraphQL; non-zero on HTTP/GraphQL errors.
 
 Output:
 - Tables for lists; key/value blocks for detail views.
-- `--json` prints parsed JSON; `--data-only` on `gql` strips the envelope.
+- `--json` prints parsed JSON; `--data-only` on `issue view|create` emits machine-oriented fields, and on `gql` strips the envelope.
 - Errors include HTTP status and first GraphQL error when available; 401s nudge to set `LINEAR_API_KEY` or run `auth set`.
 
 ## GraphQL Client
@@ -44,4 +44,4 @@ Output:
 - Default team id: ``.
 - Default output: table.
 - Default state exclusion: `completed`, `canceled`.
-- Pagination: 25 items per page; additional pages currently reported as a warning.
+- Pagination: 25 items per page; `--cursor`, `--pages`, and `--all` drive additional page fetches with a fetched-count summary.
