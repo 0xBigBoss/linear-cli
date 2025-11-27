@@ -22,6 +22,8 @@ const Options = struct {
     assignee: ?[]const u8 = null,
     labels: ?[]const u8 = null,
     help: bool = false,
+    quiet: bool = false,
+    data_only: bool = false,
 };
 
 const ResolvedId = struct {
@@ -131,7 +133,7 @@ pub fn run(ctx: Context) !u8 {
     };
     defer response.deinit();
 
-    common.checkResponse("issue create", &response, stderr) catch {
+    common.checkResponse("issue create", &response, stderr, api_key) catch {
         return 1;
     };
 
@@ -140,7 +142,7 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    if (ctx.json_output) {
+    if (ctx.json_output and !opts.quiet and !opts.data_only) {
         var out_buf: [0]u8 = undefined;
         var out_writer = std.fs.File.stdout().writer(&out_buf);
         try printer.printJson(data_value, &out_writer.interface, true);
@@ -176,10 +178,37 @@ pub fn run(ctx: Context) !u8 {
         .{ .key = "Title", .value = title_value },
         .{ .key = "URL", .value = url },
     };
+    const data_pairs = [_]printer.KeyValue{
+        .{ .key = "identifier", .value = identifier },
+        .{ .key = "title", .value = title_value },
+        .{ .key = "url", .value = url },
+    };
 
     var out_buf: [0]u8 = undefined;
     var out_writer = std.fs.File.stdout().writer(&out_buf);
-    try printer.printKeyValues(&out_writer.interface, pairs[0..]);
+    var stdout_iface = &out_writer.interface;
+
+    if (opts.quiet) {
+        try stdout_iface.writeAll(identifier);
+        try stdout_iface.writeByte('\n');
+        return 0;
+    }
+
+    if (opts.data_only) {
+        if (ctx.json_output) {
+            var data_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+            for (data_pairs) |pair| {
+                try data_obj.object.put(pair.key, .{ .string = pair.value });
+            }
+            try printer.printJson(data_obj, stdout_iface, true);
+            return 0;
+        }
+
+        try printer.printKeyValuesPlain(stdout_iface, data_pairs[0..]);
+        return 0;
+    }
+
+    try printer.printKeyValues(stdout_iface, pairs[0..]);
     return 0;
 }
 
@@ -218,7 +247,7 @@ fn resolveTeamId(ctx: Context, client: *graphql.GraphqlClient, value: []const u8
     };
     defer response.deinit();
 
-    common.checkResponse("issue create", &response, stderr) catch {
+    common.checkResponse("issue create", &response, stderr, api_key) catch {
         return error.InvalidTeam;
     };
 
@@ -250,6 +279,16 @@ pub fn parseOptions(args: []const []const u8) !Options {
         const arg = args[idx];
         if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             opts.help = true;
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--quiet")) {
+            opts.quiet = true;
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--data-only")) {
+            opts.data_only = true;
             idx += 1;
             continue;
         }
@@ -338,7 +377,7 @@ pub fn parseOptions(args: []const []const u8) !Options {
 
 fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--help]
+        \\Usage: linear issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --team ID|KEY        Team id or key (required)
         \\  --title TITLE        Issue title (required)
@@ -347,6 +386,8 @@ fn usage(writer: anytype) !void {
         \\  --state STATE_ID     State id to apply
         \\  --assignee USER_ID   Assignee id
         \\  --labels LIST        Comma-separated label ids
+        \\  --quiet              Print only the identifier
+        \\  --data-only          Emit tab-separated fields without formatting (or JSON object with --json)
         \\  --help               Show this help message
         \\
     , .{});

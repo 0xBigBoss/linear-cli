@@ -6,21 +6,34 @@ pub const GraphqlClient = struct {
     allocator: Allocator,
     api_key: []const u8,
     endpoint: []const u8 = "https://api.linear.app/graphql",
-    http_client: std.http.Client,
+    http_client: *std.http.Client,
+    keep_alive: bool,
     // TODO: make timeouts configurable when retry policy is added.
     timeout_ms: u32 = 10_000,
     max_retries: u8 = 0,
 
+    pub const Options = struct {
+        keep_alive: ?bool = null,
+    };
+
     pub fn init(allocator: Allocator, api_key: []const u8) GraphqlClient {
+        return initWithOptions(allocator, api_key, .{});
+    }
+
+    pub fn initWithOptions(allocator: Allocator, api_key: []const u8, options: Options) GraphqlClient {
+        const http_client = shared_client.acquire(allocator);
+        markTlsRefresh(http_client);
         return .{
             .allocator = allocator,
             .api_key = api_key,
-            .http_client = std.http.Client{ .allocator = allocator },
+            .http_client = http_client,
+            .keep_alive = options.keep_alive orelse keep_alive_preference.load(.acquire),
         };
     }
 
     pub fn deinit(self: *GraphqlClient) void {
-        self.http_client.deinit();
+        _ = self;
+        shared_client.release();
     }
 
     pub const Request = struct {
@@ -96,6 +109,7 @@ pub const GraphqlClient = struct {
                 .method = .POST,
                 .payload = payload_bytes,
                 .response_writer = &response_writer.writer,
+                .keep_alive = self.keep_alive,
                 .headers = .{
                     .authorization = .{ .override = self.api_key },
                     .content_type = .{ .override = "application/json" },
@@ -122,6 +136,61 @@ pub const GraphqlClient = struct {
         };
     }
 };
+
+pub fn setDefaultKeepAlive(enabled: bool) void {
+    keep_alive_preference.store(enabled, .release);
+}
+
+pub fn getDefaultKeepAlive() bool {
+    return keep_alive_preference.load(.acquire);
+}
+
+pub fn deinitSharedClient() void {
+    shared_client.shutdown();
+}
+
+const SharedHttpClient = struct {
+    mutex: std.Thread.Mutex = .{},
+    ref_count: usize = 0,
+    client: ?std.http.Client = null,
+
+    fn acquire(self: *SharedHttpClient, allocator: Allocator) *std.http.Client {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.client == null) {
+            self.client = std.http.Client{ .allocator = allocator };
+        }
+        self.ref_count += 1;
+        return &self.client.?;
+    }
+
+    fn release(self: *SharedHttpClient) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.client == null) return;
+        std.debug.assert(self.ref_count > 0);
+        self.ref_count -= 1;
+    }
+
+    fn shutdown(self: *SharedHttpClient) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.client == null) return;
+        std.debug.assert(self.ref_count == 0);
+        self.client.?.deinit();
+        self.client = null;
+    }
+};
+
+var shared_client: SharedHttpClient = .{};
+var keep_alive_preference = std.atomic.Value(bool).init(true);
+
+fn markTlsRefresh(client: *std.http.Client) void {
+    @atomicStore(bool, &client.next_https_rescan_certs, true, .release);
+}
 
 fn buildPayload(allocator: Allocator, req: GraphqlClient.Request) ![]u8 {
     const Payload = struct {

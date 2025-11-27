@@ -16,6 +16,8 @@ pub const Context = struct {
 const Options = struct {
     identifier: ?[]const u8 = null,
     help: bool = false,
+    quiet: bool = false,
+    data_only: bool = false,
 };
 
 pub fn run(ctx: Context) !u8 {
@@ -80,7 +82,7 @@ pub fn run(ctx: Context) !u8 {
     };
     defer response.deinit();
 
-    common.checkResponse("issue view", &response, stderr) catch {
+    common.checkResponse("issue view", &response, stderr, api_key) catch {
         return 1;
     };
 
@@ -89,7 +91,7 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    if (ctx.json_output) {
+    if (ctx.json_output and !opts.quiet and !opts.data_only) {
         var out_buf: [0]u8 = undefined;
         var out_writer = std.fs.File.stdout().writer(&out_buf);
         try printer.printJson(data_value, &out_writer.interface, true);
@@ -126,10 +128,54 @@ pub fn run(ctx: Context) !u8 {
         .{ .key = "Created", .value = created },
         .{ .key = "Updated", .value = updated },
     };
+    const data_pairs = [_]printer.KeyValue{
+        .{ .key = "identifier", .value = identifier },
+        .{ .key = "title", .value = title },
+        .{ .key = "state", .value = state_value },
+        .{ .key = "assignee", .value = assignee_value },
+        .{ .key = "priority", .value = priority },
+        .{ .key = "url", .value = url },
+        .{ .key = "created_at", .value = created },
+        .{ .key = "updated_at", .value = updated },
+    };
 
     var stdout_buf: [0]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
     var stdout_iface = &stdout_writer.interface;
+
+    if (opts.quiet) {
+        try stdout_iface.writeAll(identifier);
+        try stdout_iface.writeByte('\n');
+        return 0;
+    }
+
+    if (opts.data_only) {
+        if (ctx.json_output) {
+            var data_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+            for (data_pairs) |pair| {
+                try data_obj.object.put(pair.key, .{ .string = pair.value });
+            }
+            if (description) |desc| {
+                if (desc.len > 0) {
+                    try data_obj.object.put("description", .{ .string = desc });
+                }
+            }
+            try printer.printJson(data_obj, stdout_iface, true);
+            return 0;
+        }
+
+        try printer.printKeyValuesPlain(stdout_iface, data_pairs[0..]);
+        if (description) |desc| {
+            if (desc.len > 0) {
+                const desc_pair = [_]printer.KeyValue{
+                    .{ .key = "description", .value = desc },
+                };
+                try printer.printKeyValuesPlain(stdout_iface, desc_pair[0..]);
+            }
+        }
+        return 0;
+    }
+
     try printer.printKeyValues(stdout_iface, pairs[0..]);
     if (description) |desc| {
         if (desc.len > 0) {
@@ -153,6 +199,16 @@ fn parseOptions(args: [][]const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--quiet")) {
+            opts.quiet = true;
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--data-only")) {
+            opts.data_only = true;
+            idx += 1;
+            continue;
+        }
         if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
         if (opts.identifier == null) {
             opts.identifier = arg;
@@ -166,9 +222,11 @@ fn parseOptions(args: [][]const u8) !Options {
 
 fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue view <ID|IDENTIFIER> [--help]
+        \\Usage: linear issue view <ID|IDENTIFIER> [--quiet] [--data-only] [--help]
         \\Flags:
-        \\  --help    Show this help message
+        \\  --quiet        Print only the identifier
+        \\  --data-only    Emit tab-separated fields without formatting (or JSON object with --json)
+        \\  --help         Show this help message
         \\
     , .{});
 }
