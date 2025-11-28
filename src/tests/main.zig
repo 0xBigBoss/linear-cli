@@ -704,6 +704,7 @@ fn makeTestConfig(allocator: std.mem.Allocator) !config.Config {
     var cfg = config.Config{ .allocator = allocator };
     cfg.team_cache = std.StringHashMap([]const u8).init(allocator);
     try cfg.setApiKey("test-key");
+    try cfg.setDefaultTeamId("test-team-id");
     return cfg;
 }
 
