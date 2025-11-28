@@ -5,7 +5,12 @@ VERSION="${1:?Usage: publish-npm.sh <version>}"
 
 # Configure npm auth if NPM_TOKEN is set
 if [[ -n "${NPM_TOKEN:-}" ]]; then
-  echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+  NPMRC_CONTENT="//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
+  echo "$NPMRC_CONTENT" > ~/.npmrc
+  # Also write to each package dir for bun publish
+  for d in npm/*/; do
+    echo "$NPMRC_CONTENT" > "${d}.npmrc"
+  done
 fi
 
 # Update versions
