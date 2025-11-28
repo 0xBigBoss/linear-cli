@@ -180,6 +180,16 @@ pub fn build(b: *std.Build) void {
     issue_view_mod.addImport("common", common_test_mod);
     tests_mod.addImport("issue_view_test", issue_view_mod);
 
+    const issue_view_online_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/issue_view.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    issue_view_online_mod.addImport("config", config_mod);
+    issue_view_online_mod.addImport("graphql", graphql_mod);
+    issue_view_online_mod.addImport("printer", printer_mod);
+    issue_view_online_mod.addImport("common", common_mod);
+
     const me_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/me.zig"),
         .target = target,
@@ -190,6 +200,16 @@ pub fn build(b: *std.Build) void {
     me_mod.addImport("printer", printer_mod);
     me_mod.addImport("common", common_test_mod);
     tests_mod.addImport("me_test", me_mod);
+
+    const me_online_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/me.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    me_online_mod.addImport("config", config_mod);
+    me_online_mod.addImport("graphql", graphql_mod);
+    me_online_mod.addImport("printer", printer_mod);
+    me_online_mod.addImport("common", common_mod);
 
     const teams_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/teams.zig"),
@@ -202,9 +222,55 @@ pub fn build(b: *std.Build) void {
     teams_mod.addImport("common", common_test_mod);
     tests_mod.addImport("teams_test", teams_mod);
 
+    const teams_online_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/teams.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    teams_online_mod.addImport("config", config_mod);
+    teams_online_mod.addImport("graphql", graphql_mod);
+    teams_online_mod.addImport("printer", printer_mod);
+    teams_online_mod.addImport("common", common_mod);
+
+    const auth_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/auth.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    auth_mod.addImport("config", config_mod);
+    auth_mod.addImport("graphql", graphql_mod);
+    auth_mod.addImport("printer", printer_mod);
+    auth_mod.addImport("common", common_mod);
+
     const test_step = b.step("test", "Run unit tests");
     const run_tests = b.addRunArtifact(tests);
     test_step.dependOn(&run_tests.step);
+
+    const online_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests/online.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    online_tests.root_module.addOptions("build_options", build_options);
+    online_tests.root_module.addImport("config", config_mod);
+    online_tests.root_module.addImport("graphql", graphql_mod);
+    online_tests.root_module.addImport("printer", printer_mod);
+    online_tests.root_module.addImport("common", common_mod);
+    online_tests.root_module.addImport("cli", cli_mod);
+    online_tests.root_module.addImport("auth", auth_mod);
+    online_tests.root_module.addImport("teams_cmd", teams_online_mod);
+    online_tests.root_module.addImport("issues_cmd", issues_mod);
+    online_tests.root_module.addImport("issue_view_cmd", issue_view_online_mod);
+    online_tests.root_module.addImport("issue_create_cmd", issue_create_mod);
+    online_tests.root_module.addImport("issue_delete_cmd", issue_delete_mod);
+    online_tests.root_module.addImport("me_cmd", me_online_mod);
+    online_tests.root_module.addImport("gql_cmd", gql_mod);
+
+    const online_step = b.step("online", "Run online tests (requires LINEAR_ONLINE_TESTS=1 and LINEAR_API_KEY)");
+    const run_online = b.addRunArtifact(online_tests);
+    online_step.dependOn(&run_online.step);
 }
 
 fn detectGitHash(allocator: std.mem.Allocator) []const u8 {

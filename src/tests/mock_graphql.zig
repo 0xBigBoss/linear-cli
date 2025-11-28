@@ -44,6 +44,13 @@ const ResponseSeries = struct {
 pub const MockServer = struct {
     allocator: Allocator,
     fixtures: std.StringHashMap(ResponseSeries),
+    last_request: ?CapturedRequest = null,
+
+    pub const CapturedRequest = struct {
+        operation: []const u8,
+        query: []const u8,
+        variables_json: ?[]const u8 = null,
+    };
 
     pub fn init(allocator: Allocator) MockServer {
         return .{
@@ -53,6 +60,7 @@ pub const MockServer = struct {
     }
 
     pub fn deinit(self: *MockServer) void {
+        self.clearLastRequest();
         var it = self.fixtures.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.*.deinit();
@@ -108,6 +116,43 @@ pub const MockServer = struct {
             return entry.take();
         }
         return null;
+    }
+
+    fn clearLastRequest(self: *MockServer) void {
+        if (self.last_request) |req| {
+            self.allocator.free(req.operation);
+            self.allocator.free(req.query);
+            if (req.variables_json) |vars| self.allocator.free(vars);
+            self.last_request = null;
+        }
+    }
+
+    fn recordRequest(self: *MockServer, op_name: []const u8, query: []const u8, variables: ?std.json.Value) !void {
+        self.clearLastRequest();
+        const op_copy = try self.allocator.dupe(u8, op_name);
+        errdefer self.allocator.free(op_copy);
+        const query_copy = try self.allocator.dupe(u8, query);
+        errdefer self.allocator.free(query_copy);
+
+        var vars_copy: ?[]u8 = null;
+        if (variables) |vars_value| {
+            var out: std.io.Writer.Allocating = .init(self.allocator);
+            defer out.deinit();
+
+            var jw = std.json.Stringify{ .writer = &out.writer, .options = .{ .whitespace = .minified } };
+            try jw.write(vars_value);
+            vars_copy = try self.allocator.dupe(u8, out.written());
+        }
+
+        self.last_request = .{
+            .operation = op_copy,
+            .query = query_copy,
+            .variables_json = vars_copy,
+        };
+    }
+
+    pub fn lastRequest(self: *MockServer) ?CapturedRequest {
+        return self.last_request;
     }
 };
 
@@ -213,6 +258,7 @@ pub const GraphqlClient = struct {
         const server = self.server orelse return Error.MockServerNotInstalled;
         const op_name = req.operation_name orelse return Error.MissingOperationName;
         const fixture = server.lookup(op_name) orelse return Error.MissingFixture;
+        try server.recordRequest(op_name, req.query, req.variables);
 
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, fixture.body, .{});
         return .{

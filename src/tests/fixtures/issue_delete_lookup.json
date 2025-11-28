@@ -1,0 +1,9 @@
+{
+  "data": {
+    "issue": {
+      "id": "issue-del-lookup",
+      "identifier": "LIN-300",
+      "title": "Delete target"
+    }
+  }
+}

@@ -138,3 +138,32 @@ pub fn redactKey(key: []const u8, buffer: []u8) []const u8 {
         if (tail_len > 0) key[key.len - tail_len ..] else "",
     }) catch "<redacted>";
 }
+
+test "checkResponse reports auth errors and redacts key" {
+    const allocator = std.testing.allocator;
+    const body =
+        \\{
+        \\  "errors": [ { "message": "bad request" } ]
+        \\}
+    ;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
+    defer parsed.deinit();
+
+    var resp = graphql.GraphqlClient.Response{
+        .status = 401,
+        .parsed = parsed,
+    };
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+
+    try std.testing.expectError(CommandError.CommandFailed, checkResponse("issues", &resp, buffer.writer(), "abcd1234"));
+    const output = buffer.items;
+    try std.testing.expect(std.mem.indexOf(u8, output, "HTTP status 401") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "abcd...1234") != null);
+}
+
+test "redactKey falls back for short inputs" {
+    var buf: [8]u8 = undefined;
+    const value = redactKey("k", &buf);
+    try std.testing.expectEqualStrings("k...k", value);
+}

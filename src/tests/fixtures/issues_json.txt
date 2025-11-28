@@ -36,5 +36,10 @@
       "hasNextPage": true,
       "endCursor": "cursor-2"
     }
-  }
+  },
+  "pageInfo": {
+    "hasNextPage": true,
+    "endCursor": "cursor-2"
+  },
+  "limit": 25
 }

@@ -405,3 +405,25 @@ fn parseRateLimitValue(value: std.json.Value, info: *GraphqlClient.RateLimitInfo
         }
     }
 }
+
+test "parseRateLimitFromHeaders extracts values" {
+    const headers =
+        "HTTP/1.1 200 OK\r\n" ++
+        "Retry-After: 2\r\n" ++
+        "X-RateLimit-Remaining: 5\r\n" ++
+        "X-RateLimit-Limit: 10\r\n" ++
+        "X-RateLimit-Reset: 123\r\n\r\n";
+    const info = parseRateLimitFromHeaders(headers);
+    try std.testing.expectEqual(@as(u32, 5), info.remaining.?);
+    try std.testing.expectEqual(@as(u32, 10), info.limit.?);
+    try std.testing.expectEqual(@as(u32, 2000), info.retry_after_ms.?);
+    try std.testing.expectEqual(@as(u64, 123000), info.reset_epoch_ms.?);
+}
+
+test "computeDelayMs honors retry-after and budget" {
+    var prng = std.Random.DefaultPrng.init(1);
+    var random = prng.random();
+    const delay = computeDelayMs(0, .{ .retry_after_ms = 50 }, 1000, &random) orelse return error.TestExpectedResult;
+    try std.testing.expect(delay >= 50);
+    try std.testing.expect(delay <= 150);
+}

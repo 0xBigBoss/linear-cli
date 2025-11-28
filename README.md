@@ -4,7 +4,7 @@ Single-binary Linear client built with Zig 0.15.2. Uses stdlib only, defaults to
 
 ## Build & Test
 - Build: `zig build -Drelease-safe` (debug is default). Binary installs to `zig-out/bin/linear`.
-- Tests: `zig build test`. Online smoke runs only if `LINEAR_ONLINE_TESTS=1` and `LINEAR_API_KEY` are set.
+- Tests: `zig build test`. Online suite runs with `LINEAR_ONLINE_TESTS=1`: `LINEAR_ONLINE_TESTS=1 LINEAR_TEST_TEAM_ID=<TEAM_ID> zig build online` (requires `LINEAR_API_KEY`; optional `LINEAR_TEST_ISSUE_ID`, `LINEAR_TEST_PROJECT_ID`, `LINEAR_TEST_MILESTONE_ID`; opt-in mutations with `LINEAR_TEST_ALLOW_MUTATIONS=1`).
 
 ## Config & Auth
 - Config path: `~/.config/linear/config.json` (override with `--config PATH` or env `LINEAR_CONFIG`).
@@ -34,15 +34,16 @@ Commands:
 - `auth show [--redacted]` — view the configured key (masked when requested).
 - `me` — show current user.
 - `teams list [--fields id,key,name] [--plain] [--no-truncate]` — list teams with optional column and formatting controls.
-- `issues list [--team ID|KEY] [--state TYPES] [--created-since TS] [--updated-since TS] [--limit N] [--cursor CURSOR] [--pages N|--all] [--fields ...] [--plain] [--no-truncate] [--human-time]` — defaults to the config team; excludes completed/canceled unless `--state` is provided; supports parent/sub-issue columns and paginates with cursor support plus page summaries.
-- `issue view <ID|IDENTIFIER> [--fields LIST] [--quiet] [--data-only] [--human-time]` — show a single issue; `--fields` filters output (identifier,title,state,assignee,priority,url,created_at,updated_at,description); `--quiet` prints only the identifier, `--data-only` emits tab-separated fields or JSON.
+- `issues list [--team ID|KEY] [--state TYPES] [--created-since TS] [--updated-since TS] [--project ID] [--milestone ID] [--limit N] [--max-items N] [--sub-limit N] [--cursor CURSOR] [--pages N|--all] [--fields ...] [--include-projects] [--plain] [--no-truncate] [--human-time]` — defaults to the config team; excludes completed/canceled unless `--state` is provided; project/milestone filters available; parent/sub-issue columns stay opt-in and can be disabled entirely via `--sub-limit 0`; `--include-projects` (or fields) adds project/milestone context; `--max-items` stops mid-page when needed; paginates with cursor support plus page summaries.
+- `issue view <ID|IDENTIFIER> [--fields LIST] [--quiet] [--data-only] [--human-time] [--sub-limit N]` — show a single issue; `--fields` filters output (identifier,title,state,assignee,priority,url,created_at,updated_at,description,project,milestone,parent,sub_issues); `--sub-limit` controls sub-issue expansion when requested; `--quiet` prints only the identifier, `--data-only` emits tab-separated fields or JSON.
 - `issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--yes] [--quiet] [--data-only]` — resolves team key to id when needed, caches lookups, and returns identifier/url; requires `--yes`/`--force` to proceed (otherwise exits with a message).
-- `issue delete <ID|IDENTIFIER> [--yes] [--quiet] [--data-only]` — archives an issue by id/identifier; requires `--yes`/`--force` to proceed.
+- `issue delete <ID|IDENTIFIER> [--yes] [--dry-run] [--reason TEXT] [--quiet] [--data-only]` — archives an issue by id/identifier; requires `--yes`/`--force` to proceed; `--dry-run` validates the target without sending the mutation and echoes the reason/title for auditing.
 - `gql [--query FILE] [--vars JSON|--vars-file FILE] [--operation-name NAME] [--fields LIST] [--data-only]` — arbitrary GraphQL; non-zero on HTTP/GraphQL errors.
 
 ## Output
 - Tables for lists; key/value blocks for detail views.
 - `--json` prints parsed JSON (gql honors `--fields` when present).
+ - `issues list --json` adds top-level `pageInfo` plus limit/sort metadata (and `maxItems` when set); `--data-only --json` emits a nodes array with a sibling `pageInfo`.
 - `--plain` disables padding/truncation; `--no-truncate` keeps full cell text.
 - `--human-time` renders issue timestamps relative to now.
 - `--data-only` on `issue view|create` emits tab-separated fields (or JSON); `--quiet` prints only the identifier. On `gql`, `--data-only` strips the GraphQL envelope.

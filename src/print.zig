@@ -6,7 +6,7 @@ pub const TableOptions = struct {
     truncate: bool = true,
 };
 
-pub const IssueField = enum { identifier, title, state, assignee, priority, updated, parent, sub_issues };
+pub const IssueField = enum { identifier, title, state, assignee, priority, updated, parent, sub_issues, project, milestone };
 pub const issue_default_fields = [_]IssueField{ .identifier, .title, .state, .assignee, .priority, .updated };
 pub const issue_field_count = std.meta.fields(IssueField).len;
 
@@ -48,6 +48,8 @@ pub const IssueRow = struct {
     priority: []const u8,
     parent: []const u8,
     sub_issues: []const u8,
+    project: []const u8,
+    milestone: []const u8,
     updated: []const u8,
 };
 
@@ -282,6 +284,8 @@ fn issueFieldLabel(field: IssueField) []const u8 {
         .priority => "Priority",
         .parent => "Parent",
         .sub_issues => "Sub-issues",
+        .project => "Project",
+        .milestone => "Milestone",
         .updated => "Updated",
     };
 }
@@ -295,6 +299,8 @@ fn issueFieldCap(field: IssueField) usize {
         .priority => 10,
         .parent => 20,
         .sub_issues => 32,
+        .project => 28,
+        .milestone => 28,
         .updated => 25,
     };
 }
@@ -309,6 +315,8 @@ fn fillIssueCells(row: IssueRow, fields: []const IssueField, buffer: *[issue_fie
             .priority => row.priority,
             .parent => row.parent,
             .sub_issues => row.sub_issues,
+            .project => row.project,
+            .milestone => row.milestone,
             .updated => row.updated,
         };
     }

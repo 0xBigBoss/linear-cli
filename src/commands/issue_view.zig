@@ -23,9 +23,10 @@ const Options = struct {
     data_only: bool = false,
     human_time: bool = false,
     fields: ?[]const u8 = null,
+    sub_limit: usize = 10,
 };
 
-const Field = enum { identifier, title, state, assignee, priority, url, created_at, updated_at, description };
+const Field = enum { identifier, title, state, assignee, priority, url, created_at, updated_at, description, project, milestone, parent, sub_issues };
 const default_fields = [_]Field{ .identifier, .title, .state, .assignee, .priority, .url, .created_at, .updated_at, .description };
 
 pub fn run(ctx: Context) !u8 {
@@ -70,6 +71,10 @@ pub fn run(ctx: Context) !u8 {
         try stderr.print("issue view: {s}\n", .{message});
         return 1;
     };
+    const include_project = containsField(selected_fields, .project);
+    const include_milestone = containsField(selected_fields, .milestone);
+    const include_parent = containsField(selected_fields, .parent);
+    const include_subs = containsField(selected_fields, .sub_issues) and opts.sub_limit > 0;
 
     var arena = std.heap.ArenaAllocator.init(ctx.allocator);
     defer arena.deinit();
@@ -77,23 +82,25 @@ pub fn run(ctx: Context) !u8 {
 
     var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
     try variables.object.put("id", .{ .string = target });
+    if (include_subs) {
+        const sub_limit_i64 = std.math.cast(i64, opts.sub_limit) orelse return error.InvalidLimit;
+        try variables.object.put("subLimit", .{ .integer = sub_limit_i64 });
+    }
 
-    const query =
-        \\query IssueView($id: String!) {
-        \\  issue(id: $id) {
-        \\    id
-        \\    identifier
-        \\    title
-        \\    description
-        \\    state { name type }
-        \\    assignee { name }
-        \\    priorityLabel
-        \\    url
-        \\    createdAt
-        \\    updatedAt
-        \\  }
-        \\}
-    ;
+    var query_builder = std.ArrayListUnmanaged(u8){};
+    defer query_builder.deinit(ctx.allocator);
+    try query_builder.appendSlice(ctx.allocator, "query IssueView($id: String!");
+    if (include_subs) try query_builder.appendSlice(ctx.allocator, ", $subLimit: Int!");
+    try query_builder.appendSlice(
+        ctx.allocator,
+        ") {\n  issue(id: $id) {\n    id\n    identifier\n    title\n    description\n    state { name type }\n    assignee { name }\n    priorityLabel\n    url\n    createdAt\n    updatedAt\n",
+    );
+    if (include_parent) try query_builder.appendSlice(ctx.allocator, "    parent { identifier url }\n");
+    if (include_project) try query_builder.appendSlice(ctx.allocator, "    project { name }\n");
+    if (include_milestone) try query_builder.appendSlice(ctx.allocator, "    milestone: projectMilestone { title: name }\n");
+    if (include_subs) try query_builder.appendSlice(ctx.allocator, "    children(first: $subLimit) { nodes { identifier url } pageInfo { hasNextPage } }\n");
+    try query_builder.appendSlice(ctx.allocator, "  }\n}\n");
+    const query = query_builder.items;
 
     var client = graphql.GraphqlClient.init(ctx.allocator, api_key);
     defer client.deinit();
@@ -137,6 +144,44 @@ pub fn run(ctx: Context) !u8 {
     const url = common.getStringField(node, "url") orelse "";
     const created_raw = common.getStringField(node, "createdAt") orelse "";
     const updated_raw = common.getStringField(node, "updatedAt") orelse "";
+    const parent_obj = if (include_parent) common.getObjectField(node, "parent") else null;
+    const parent_identifier = if (parent_obj) |p| common.getStringField(p, "identifier") else null;
+    const parent_url = if (parent_obj) |p| common.getStringField(p, "url") else null;
+    var sub_display: []const u8 = "";
+    var sub_truncated = false;
+    if (include_subs) {
+        const subs_obj = common.getObjectField(node, "children") orelse common.getObjectField(node, "subIssues");
+        if (subs_obj) |subs| {
+            if (common.getArrayField(subs, "nodes")) |sub_nodes| {
+                var joined = std.ArrayListUnmanaged(u8){};
+                defer joined.deinit(ctx.allocator);
+                for (sub_nodes.items, 0..) |sub, idx| {
+                    if (sub != .object) continue;
+                    const sub_ident = common.getStringField(sub, "identifier") orelse continue;
+                    if (idx > 0) try joined.appendSlice(ctx.allocator, ", ");
+                    try joined.appendSlice(ctx.allocator, sub_ident);
+                }
+                if (joined.items.len > 0) {
+                    const owned = try joined.toOwnedSlice(ctx.allocator);
+                    try owned_times.append(ctx.allocator, owned);
+                    sub_display = owned;
+                }
+            }
+            if (common.getObjectField(subs, "pageInfo")) |si_page| {
+                if (common.getBoolField(si_page, "hasNextPage") orelse false) sub_truncated = true;
+            }
+        }
+    }
+    const project_obj = if (include_project) common.getObjectField(node, "project") else null;
+    const project_name = if (project_obj) |proj| common.getStringField(proj, "name") else null;
+    const milestone_obj = if (include_milestone)
+        common.getObjectField(node, "milestone") orelse common.getObjectField(node, "projectMilestone")
+    else
+        null;
+    const milestone_title = if (milestone_obj) |m|
+        common.getStringField(m, "title") orelse common.getStringField(m, "name")
+    else
+        null;
     const created = if (opts.human_time) blk: {
         const formatted = printer.humanTime(ctx.allocator, created_raw, null) catch null;
         if (formatted) |value| {
@@ -165,6 +210,11 @@ pub fn run(ctx: Context) !u8 {
         created: []const u8,
         updated: []const u8,
         description: ?[]const u8,
+        project: ?[]const u8,
+        milestone: ?[]const u8,
+        parent: ?[]const u8,
+        parent_url: ?[]const u8,
+        sub_issue_identifiers: []const u8,
     }{
         .identifier = identifier,
         .title = title,
@@ -175,6 +225,11 @@ pub fn run(ctx: Context) !u8 {
         .created = created,
         .updated = updated,
         .description = if (description) |desc| if (desc.len > 0) desc else null else null,
+        .project = if (include_project) project_name else null,
+        .milestone = if (include_milestone) milestone_title else null,
+        .parent = if (include_parent) parent_identifier else null,
+        .parent_url = if (include_parent) parent_url else null,
+        .sub_issue_identifiers = sub_display,
     };
 
     var display_pairs = std.ArrayListUnmanaged(printer.KeyValue){};
@@ -222,6 +277,31 @@ pub fn run(ctx: Context) !u8 {
                     try appendPair(&data_pairs, ctx.allocator, "description", desc_value);
                 }
             },
+            .project => {
+                if (values.project) |proj| {
+                    try appendPair(&display_pairs, ctx.allocator, "Project", proj);
+                    try appendPair(&data_pairs, ctx.allocator, "project", proj);
+                }
+            },
+            .milestone => {
+                if (values.milestone) |ms| {
+                    try appendPair(&display_pairs, ctx.allocator, "Milestone", ms);
+                    try appendPair(&data_pairs, ctx.allocator, "milestone", ms);
+                }
+            },
+            .parent => {
+                if (values.parent) |pval| {
+                    try appendPair(&display_pairs, ctx.allocator, "Parent", pval);
+                    try appendPair(&data_pairs, ctx.allocator, "parent", pval);
+                    if (values.parent_url) |purl| try appendPair(&data_pairs, ctx.allocator, "parent_url", purl);
+                }
+            },
+            .sub_issues => {
+                if (values.sub_issue_identifiers.len > 0) {
+                    try appendPair(&display_pairs, ctx.allocator, "Sub-issues", values.sub_issue_identifiers);
+                    try appendPair(&data_pairs, ctx.allocator, "sub_issue_identifiers", values.sub_issue_identifiers);
+                }
+            },
         }
     }
 
@@ -232,6 +312,9 @@ pub fn run(ctx: Context) !u8 {
     if (opts.quiet) {
         try stdout_iface.writeAll(identifier);
         try stdout_iface.writeByte('\n');
+        if (sub_truncated) {
+            try stderr.print("issue view: sub-issues limited to {d}; additional sub-issues omitted\n", .{opts.sub_limit});
+        }
         return 0;
     }
 
@@ -242,10 +325,16 @@ pub fn run(ctx: Context) !u8 {
                 try data_obj.object.put(pair.key, .{ .string = pair.value });
             }
             try printer.printJson(data_obj, stdout_iface, true);
+            if (sub_truncated) {
+                try stderr.print("issue view: sub-issues limited to {d}; additional sub-issues omitted\n", .{opts.sub_limit});
+            }
             return 0;
         }
 
         try printer.printKeyValuesPlain(stdout_iface, data_pairs.items);
+        if (sub_truncated) {
+            try stderr.print("issue view: sub-issues limited to {d}; additional sub-issues omitted\n", .{opts.sub_limit});
+        }
         return 0;
     }
 
@@ -261,10 +350,17 @@ pub fn run(ctx: Context) !u8 {
             }
             try printer.printJson(data_obj, stdout_iface, true);
         }
+        if (sub_truncated) {
+            try stderr.print("issue view: sub-issues limited to {d}; additional sub-issues omitted\n", .{opts.sub_limit});
+        }
         return 0;
     }
 
     try printer.printKeyValues(stdout_iface, display_pairs.items);
+
+    if (sub_truncated) {
+        try stderr.print("issue view: sub-issues limited to {d}; additional sub-issues omitted\n", .{opts.sub_limit});
+    }
 
     return 0;
 }
@@ -302,6 +398,17 @@ fn parseOptions(args: [][]const u8) !Options {
         }
         if (std.mem.eql(u8, arg, "--human-time")) {
             opts.human_time = true;
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--sub-limit")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.sub_limit = try std.fmt.parseInt(usize, args[idx + 1], 10);
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--sub-limit=")) {
+            opts.sub_limit = try std.fmt.parseInt(usize, arg["--sub-limit=".len..], 10);
             idx += 1;
             continue;
         }
@@ -343,6 +450,10 @@ fn parseFieldName(name: []const u8) ?Field {
     if (std.ascii.eqlIgnoreCase(name, "created") or std.ascii.eqlIgnoreCase(name, "created_at")) return .created_at;
     if (std.ascii.eqlIgnoreCase(name, "updated") or std.ascii.eqlIgnoreCase(name, "updated_at")) return .updated_at;
     if (std.ascii.eqlIgnoreCase(name, "description")) return .description;
+    if (std.ascii.eqlIgnoreCase(name, "project")) return .project;
+    if (std.ascii.eqlIgnoreCase(name, "milestone")) return .milestone;
+    if (std.ascii.eqlIgnoreCase(name, "parent")) return .parent;
+    if (std.ascii.eqlIgnoreCase(name, "sub_issues") or std.ascii.eqlIgnoreCase(name, "subIssues")) return .sub_issues;
     return null;
 }
 
@@ -359,12 +470,13 @@ fn appendPair(list: *std.ArrayListUnmanaged(printer.KeyValue), allocator: Alloca
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue view <ID|IDENTIFIER> [--quiet] [--data-only] [--fields LIST] [--human-time] [--help]
+        \\Usage: linear issue view <ID|IDENTIFIER> [--quiet] [--data-only] [--fields LIST] [--human-time] [--sub-limit N] [--help]
         \\Flags:
         \\  --quiet        Print only the identifier
         \\  --data-only    Emit tab-separated fields without formatting (or JSON object with --json)
-        \\  --fields LIST  Comma-separated fields (identifier,title,state,assignee,priority,url,created_at,updated_at,description)
+        \\  --fields LIST  Comma-separated fields (identifier,title,state,assignee,priority,url,created_at,updated_at,description,project,milestone,parent,sub_issues)
         \\  --human-time   Render timestamps as relative values
+        \\  --sub-limit N  Sub-issues to fetch when sub_issues field is requested (0 disables; default: 10)
         \\  --help         Show this help message
         \\Examples:
         \\  linear issue view ENG-123

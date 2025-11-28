@@ -41,10 +41,15 @@ const Options = struct {
     created_since: ?[]const u8 = null,
     sort: ?Sort = null,
     limit: usize = 25,
+    max_items: ?usize = null,
+    sub_limit: usize = 10,
     cursor: ?[]const u8 = null,
     pages: ?usize = null,
     all: bool = false,
     fields: ?[]const u8 = null,
+    project: ?[]const u8 = null,
+    milestone: ?[]const u8 = null,
+    include_projects: bool = false,
     plain: bool = false,
     no_truncate: bool = false,
     human_time: bool = false,
@@ -62,6 +67,8 @@ const DataRow = struct {
     parent_identifier: []const u8,
     parent_url: []const u8,
     sub_issue_identifiers: []const u8,
+    project: []const u8,
+    milestone: []const u8,
     created_raw: []const u8,
     updated_raw: []const u8,
     url: []const u8,
@@ -96,7 +103,7 @@ pub fn run(ctx: Context) !u8 {
 
     var field_buf = std.ArrayListUnmanaged(printer.IssueField){};
     defer field_buf.deinit(ctx.allocator);
-    const selected_fields = parseIssueFields(opts.fields, &field_buf, ctx.allocator) catch |err| {
+    var selected_fields = parseIssueFields(opts.fields, &field_buf, ctx.allocator) catch |err| {
         const message = switch (err) {
             error.InvalidField => "invalid --fields value",
             else => @errorName(err),
@@ -104,6 +111,32 @@ pub fn run(ctx: Context) !u8 {
         try stderr.print("issues list: {s}\n", .{message});
         return 1;
     };
+    if (opts.include_projects) {
+        if (!containsIssueField(selected_fields, .project)) try field_buf.append(ctx.allocator, .project);
+        if (!containsIssueField(selected_fields, .milestone)) try field_buf.append(ctx.allocator, .milestone);
+        selected_fields = field_buf.items;
+    }
+    const sub_enabled = opts.sub_limit > 0;
+    if (!sub_enabled) {
+        var write: usize = 0;
+        for (selected_fields) |field| {
+            if (field == .sub_issues) continue;
+            field_buf.items[write] = field;
+            write += 1;
+        }
+        field_buf.items.len = write;
+        selected_fields = field_buf.items;
+    }
+    const fields_include_parent = containsIssueField(selected_fields, .parent);
+    const fields_include_project = containsIssueField(selected_fields, .project);
+    const fields_include_milestone = containsIssueField(selected_fields, .milestone);
+    const parent_enabled = sub_enabled or fields_include_parent;
+    const project_enabled = opts.include_projects or fields_include_project;
+    const milestone_enabled = opts.include_projects or fields_include_milestone;
+    if (selected_fields.len == 0) {
+        try stderr.print("issues list: no fields selected\n", .{});
+        return 1;
+    }
     const disable_trunc = opts.plain or opts.no_truncate;
     const table_opts = printer.TableOptions{
         .pad = !disable_trunc,
@@ -115,34 +148,37 @@ pub fn run(ctx: Context) !u8 {
         try stderr.print("issues list: missing team selection\n", .{});
         return 1;
     }
+    if (opts.max_items) |max_value| {
+        if (max_value == 0) {
+            try stderr.print("issues list: invalid --max-items value\n", .{});
+            return 1;
+        }
+    }
 
     var arena = std.heap.ArenaAllocator.init(ctx.allocator);
     defer arena.deinit();
     const var_alloc = arena.allocator();
 
-    const query =
-        \\query Issues($filter: IssueFilter, $first: Int!, $after: String, $orderBy: PaginationOrderBy, $sort: [IssueSortInput!]) {
-        \\  issues(filter: $filter, first: $first, after: $after, orderBy: $orderBy, sort: $sort) {
-        \\    nodes {
-        \\      id
-        \\      identifier
-        \\      title
-        \\      state { name type }
-        \\      assignee { name }
-        \\      priorityLabel
-        \\      createdAt
-        \\      updatedAt
-        \\      url
-        \\      parent { identifier url }
-        \\      subIssues(first: 10) { nodes { identifier url } }
-        \\    }
-        \\    pageInfo {
-        \\      hasNextPage
-        \\      endCursor
-        \\    }
-        \\  }
-        \\}
-    ;
+    var query_builder = std.ArrayListUnmanaged(u8){};
+    defer query_builder.deinit(ctx.allocator);
+    try query_builder.appendSlice(
+        ctx.allocator,
+        "query Issues($filter: IssueFilter, $first: Int!, $after: String, $orderBy: PaginationOrderBy, $sort: [IssueSortInput!]",
+    );
+    if (sub_enabled) try query_builder.appendSlice(ctx.allocator, ", $subLimit: Int!");
+    try query_builder.appendSlice(
+        ctx.allocator,
+        ") {\n  issues(filter: $filter, first: $first, after: $after, orderBy: $orderBy, sort: $sort) {\n    nodes {\n      id\n      identifier\n      title\n      state { name type }\n      assignee { name }\n      priorityLabel\n      createdAt\n      updatedAt\n      url\n",
+    );
+    if (parent_enabled) try query_builder.appendSlice(ctx.allocator, "      parent { identifier url }\n");
+    if (sub_enabled) try query_builder.appendSlice(ctx.allocator, "      children(first: $subLimit) { nodes { identifier url } pageInfo { hasNextPage } }\n");
+    if (project_enabled) try query_builder.appendSlice(ctx.allocator, "      project { name }\n");
+    if (milestone_enabled) try query_builder.appendSlice(ctx.allocator, "      milestone: projectMilestone { title: name }\n");
+    try query_builder.appendSlice(
+        ctx.allocator,
+        "    }\n    pageInfo {\n      hasNextPage\n      endCursor\n    }\n  }\n}\n",
+    );
+    const query = query_builder.items;
 
     var client = graphql.GraphqlClient.init(ctx.allocator, api_key);
     defer client.deinit();
@@ -174,6 +210,8 @@ pub fn run(ctx: Context) !u8 {
     var total_fetched: usize = 0;
     var page_count: usize = 0;
     var more_available = false;
+    var max_items_reached = false;
+    var sub_truncated = false;
     var last_end_cursor: ?[]const u8 = null;
     const page_size = opts.limit;
     var next_cursor = opts.cursor;
@@ -194,6 +232,7 @@ pub fn run(ctx: Context) !u8 {
             ctx.config.default_state_filter,
             page_size,
             next_cursor,
+            if (sub_enabled) opts.sub_limit else null,
         ) catch |err| {
             try stderr.print("issues list: {s}\n", .{@errorName(err)});
             return 1;
@@ -231,14 +270,48 @@ pub fn run(ctx: Context) !u8 {
             return 1;
         };
 
-        const take_count = @min(nodes_array.items.len, page_size);
-        const page_nodes = nodes_array.items[0..take_count];
+        if (opts.max_items) |max_value| {
+            if (total_fetched >= max_value) {
+                max_items_reached = true;
+                break;
+            }
+        }
 
-        total_fetched += take_count;
+        const take_count = @min(nodes_array.items.len, page_size);
+        const remaining_allowed = if (opts.max_items) |max_value| max_value - total_fetched else take_count;
+        const allowed_count = @min(take_count, remaining_allowed);
+        const page_nodes = nodes_array.items[0..allowed_count];
+
+        total_fetched += allowed_count;
+        if (opts.max_items) |max_value| {
+            if (total_fetched >= max_value) max_items_reached = true;
+        }
         page_count += 1;
 
         if (want_raw_nodes) {
-            try nodes_accumulator.appendSlice(ctx.allocator, page_nodes);
+            const sanitize = (!parent_enabled) or (!sub_enabled) or (!project_enabled) or (!milestone_enabled);
+            for (page_nodes) |node| {
+                if (node != .object) continue;
+                if (!sanitize) {
+                    try nodes_accumulator.append(ctx.allocator, node);
+                    continue;
+                }
+
+                var cleaned = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+                var iter = node.object.iterator();
+                while (iter.next()) |entry| {
+                    const key = entry.key_ptr.*;
+                    const is_sub_key = std.mem.eql(u8, key, "children") or std.mem.eql(u8, key, "subIssues");
+                    const is_milestone_key = std.mem.eql(u8, key, "milestone") or std.mem.eql(u8, key, "projectMilestone");
+                    const skip = (!parent_enabled and std.mem.eql(u8, key, "parent")) or
+                        (!sub_enabled and is_sub_key) or
+                        (!project_enabled and std.mem.eql(u8, key, "project")) or
+                        (!milestone_enabled and is_milestone_key);
+                    if (skip) continue;
+                    try cleaned.object.put(key, entry.value_ptr.*);
+                }
+                try nodes_accumulator.append(ctx.allocator, cleaned);
+            }
         }
 
         if (want_table or want_data_rows) {
@@ -258,28 +331,44 @@ pub fn run(ctx: Context) !u8 {
                 const created_raw = common.getStringField(node, "createdAt") orelse "";
                 const updated_raw = common.getStringField(node, "updatedAt") orelse "";
                 const url = common.getStringField(node, "url") orelse "";
-                const parent_obj = common.getObjectField(node, "parent");
+                const parent_obj = if (parent_enabled) common.getObjectField(node, "parent") else null;
                 const parent_identifier = if (parent_obj) |p| common.getStringField(p, "identifier") else null;
                 const parent_url = if (parent_obj) |p| common.getStringField(p, "url") else null;
-                const parent_display = parent_identifier orelse "";
+                const parent_display = if (parent_enabled) parent_identifier orelse "" else "";
                 var sub_display: []const u8 = "";
-                if (common.getObjectField(node, "subIssues")) |subs| {
-                    if (common.getArrayField(subs, "nodes")) |sub_nodes| {
-                        var joined = std.ArrayListUnmanaged(u8){};
-                        defer joined.deinit(ctx.allocator);
-                        for (sub_nodes.items, 0..) |sub, idx| {
-                            if (sub != .object) continue;
-                            const sub_ident = common.getStringField(sub, "identifier") orelse continue;
-                            if (idx > 0) try joined.appendSlice(ctx.allocator, ", ");
-                            try joined.appendSlice(ctx.allocator, sub_ident);
+                if (sub_enabled) {
+                    const subs_obj = common.getObjectField(node, "children") orelse common.getObjectField(node, "subIssues");
+                    if (subs_obj) |subs| {
+                        if (common.getArrayField(subs, "nodes")) |sub_nodes| {
+                            var joined = std.ArrayListUnmanaged(u8){};
+                            defer joined.deinit(ctx.allocator);
+                            for (sub_nodes.items, 0..) |sub, idx| {
+                                if (sub != .object) continue;
+                                const sub_ident = common.getStringField(sub, "identifier") orelse continue;
+                                if (idx > 0) try joined.appendSlice(ctx.allocator, ", ");
+                                try joined.appendSlice(ctx.allocator, sub_ident);
+                            }
+                            if (joined.items.len > 0) {
+                                const owned = try joined.toOwnedSlice(ctx.allocator);
+                                try owned_times.append(ctx.allocator, owned);
+                                sub_display = owned;
+                            }
                         }
-                        if (joined.items.len > 0) {
-                            const owned = try joined.toOwnedSlice(ctx.allocator);
-                            try owned_times.append(ctx.allocator, owned);
-                            sub_display = owned;
+                        if (common.getObjectField(subs, "pageInfo")) |si_page| {
+                            if (common.getBoolField(si_page, "hasNextPage") orelse false) sub_truncated = true;
                         }
                     }
                 }
+                const project_obj = if (project_enabled) common.getObjectField(node, "project") else null;
+                const project_name = if (project_obj) |proj| common.getStringField(proj, "name") else null;
+                const milestone_obj = if (milestone_enabled)
+                    common.getObjectField(node, "milestone") orelse common.getObjectField(node, "projectMilestone")
+                else
+                    null;
+                const milestone_title = if (milestone_obj) |m|
+                    common.getStringField(m, "title") orelse common.getStringField(m, "name")
+                else
+                    null;
 
                 var updated_display = updated_raw;
                 if (opts.human_time and want_table) {
@@ -298,7 +387,9 @@ pub fn run(ctx: Context) !u8 {
                         .assignee = assignee_value,
                         .priority = priority,
                         .parent = parent_display,
-                        .sub_issues = sub_display,
+                        .sub_issues = if (sub_enabled) sub_display else "",
+                        .project = if (project_enabled) project_name orelse "" else "",
+                        .milestone = if (milestone_enabled) milestone_title orelse "" else "",
                         .updated = updated_display,
                     });
                 }
@@ -310,9 +401,11 @@ pub fn run(ctx: Context) !u8 {
                         .state = state_value,
                         .assignee = assignee_value,
                         .priority = priority,
-                        .parent_identifier = parent_identifier orelse "",
-                        .parent_url = parent_url orelse "",
-                        .sub_issue_identifiers = sub_display,
+                        .parent_identifier = if (parent_enabled) parent_identifier orelse "" else "",
+                        .parent_url = if (parent_enabled) parent_url orelse "" else "",
+                        .sub_issue_identifiers = if (sub_enabled) sub_display else "",
+                        .project = if (project_enabled) project_name orelse "" else "",
+                        .milestone = if (milestone_enabled) milestone_title orelse "" else "",
                         .created_raw = created_raw,
                         .updated_raw = updated_raw,
                         .url = url,
@@ -326,7 +419,11 @@ pub fn run(ctx: Context) !u8 {
         last_end_cursor = if (page_info) |pi| common.getStringField(pi, "endCursor") else null;
         more_available = has_next;
 
-        if (take_count == 0) {
+        if (allowed_count < take_count and opts.max_items != null) {
+            max_items_reached = true;
+        }
+
+        if (take_count == 0 or allowed_count == 0) {
             if (has_next) {
                 try stderr.print("issues list: received empty page; stopping pagination\n", .{});
             }
@@ -337,11 +434,19 @@ pub fn run(ctx: Context) !u8 {
         if (page_limit) |limit_pages| {
             if (page_count >= limit_pages) break;
         }
+        if (max_items_reached) {
+            more_available = true;
+            break;
+        }
         if (last_end_cursor == null) {
             try stderr.print("issues list: missing endCursor for additional page\n", .{});
             break;
         }
         next_cursor = last_end_cursor;
+    }
+
+    if (max_items_reached) {
+        more_available = true;
     }
 
     if (opts.quiet) {
@@ -363,12 +468,8 @@ pub fn run(ctx: Context) !u8 {
                 try obj.object.put("state", .{ .string = row.state });
                 try obj.object.put("assignee", .{ .string = row.assignee });
                 try obj.object.put("priority", .{ .string = row.priority });
-                if (row.parent_identifier.len > 0) {
-                    try obj.object.put("parent_identifier", .{ .string = row.parent_identifier });
-                }
-                if (row.parent_url.len > 0) {
-                    try obj.object.put("parent_url", .{ .string = row.parent_url });
-                }
+                if (row.parent_identifier.len > 0) try obj.object.put("parent_identifier", .{ .string = row.parent_identifier });
+                if (row.parent_url.len > 0) try obj.object.put("parent_url", .{ .string = row.parent_url });
                 if (row.sub_issue_identifiers.len > 0) {
                     var subs = std.json.Array.init(var_alloc);
                     var iter = std.mem.splitSequence(u8, row.sub_issue_identifiers, ", ");
@@ -378,6 +479,8 @@ pub fn run(ctx: Context) !u8 {
                     }
                     try obj.object.put("sub_issue_identifiers", .{ .array = subs });
                 }
+                if (row.project.len > 0) try obj.object.put("project", .{ .string = row.project });
+                if (row.milestone.len > 0) try obj.object.put("milestone", .{ .string = row.milestone });
                 if (row.created_raw.len > 0) {
                     try obj.object.put("created_at", .{ .string = row.created_raw });
                 }
@@ -385,14 +488,58 @@ pub fn run(ctx: Context) !u8 {
                 try obj.object.put("url", .{ .string = row.url });
                 try out_array.append(obj);
             }
-            const out_value = std.json.Value{ .array = out_array };
-            try printer.printJson(out_value, &out_writer.interface, true);
+            var root_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+            try root_obj.object.put("nodes", .{ .array = out_array });
+
+            var page_info_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+            try page_info_obj.object.put("hasNextPage", .{ .bool = more_available });
+            if (last_end_cursor) |cursor_value| {
+                try page_info_obj.object.put("endCursor", .{ .string = cursor_value });
+            }
+            try root_obj.object.put("pageInfo", page_info_obj);
+            const limit_value: i64 = @intCast(page_size);
+            try root_obj.object.put("limit", .{ .integer = limit_value });
+            if (opts.max_items) |max_value| {
+                const max_i64: i64 = std.math.cast(i64, max_value) orelse limit_value;
+                try root_obj.object.put("maxItems", .{ .integer = max_i64 });
+            }
+            if (opts.sort) |sort_value| {
+                var sort_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+                const sort_field = switch (sort_value.field) {
+                    .created => "createdAt",
+                    .updated => "updatedAt",
+                };
+                const sort_dir = switch (sort_value.direction) {
+                    .asc => "asc",
+                    .desc => "desc",
+                };
+                try sort_obj.object.put("field", .{ .string = sort_field });
+                try sort_obj.object.put("direction", .{ .string = sort_dir });
+                try root_obj.object.put("sort", sort_obj);
+            }
+            try printer.printJson(root_obj, &out_writer.interface, true);
         } else {
             for (data_rows.items) |row| {
-                try out_writer.interface.print(
-                    "{s}\t{s}\t{s}\t{s}\t{s}\t{s}\t{s}\n",
-                    .{ row.identifier, row.title, row.state, row.assignee, row.priority, row.updated_raw, row.url },
-                );
+                var first = true;
+                for (selected_fields) |field| {
+                    const value = switch (field) {
+                        .identifier => row.identifier,
+                        .title => row.title,
+                        .state => row.state,
+                        .assignee => row.assignee,
+                        .priority => row.priority,
+                        .parent => row.parent_identifier,
+                        .sub_issues => row.sub_issue_identifiers,
+                        .project => row.project,
+                        .milestone => row.milestone,
+                        .updated => row.updated_raw,
+                    };
+                    if (!first) try out_writer.interface.writeByte('\t') else first = false;
+                    try out_writer.interface.writeAll(value);
+                }
+                if (!first) try out_writer.interface.writeByte('\t');
+                try out_writer.interface.writeAll(row.url);
+                try out_writer.interface.writeByte('\n');
             }
         }
     } else if (ctx.json_output) {
@@ -411,6 +558,27 @@ pub fn run(ctx: Context) !u8 {
 
         var root_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
         try root_obj.object.put("issues", issues_obj);
+        try root_obj.object.put("pageInfo", page_info_obj);
+        const limit_value: i64 = @intCast(page_size);
+        try root_obj.object.put("limit", .{ .integer = limit_value });
+        if (opts.max_items) |max_value| {
+            const max_i64: i64 = std.math.cast(i64, max_value) orelse limit_value;
+            try root_obj.object.put("maxItems", .{ .integer = max_i64 });
+        }
+        if (opts.sort) |sort_value| {
+            var sort_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+            const sort_field = switch (sort_value.field) {
+                .created => "createdAt",
+                .updated => "updatedAt",
+            };
+            const sort_dir = switch (sort_value.direction) {
+                .asc => "asc",
+                .desc => "desc",
+            };
+            try sort_obj.object.put("field", .{ .string = sort_field });
+            try sort_obj.object.put("direction", .{ .string = sort_dir });
+            try root_obj.object.put("sort", sort_obj);
+        }
 
         var out_buf: [0]u8 = undefined;
         var out_writer = std.fs.File.stdout().writer(&out_buf);
@@ -433,6 +601,12 @@ pub fn run(ctx: Context) !u8 {
             try stderr.print("issues list: fetched {d} items across {d} page{s}\n", .{ total_fetched, page_count, plural });
         }
     }
+    if (max_items_reached and opts.max_items != null) {
+        try stderr.print("issues list: stopped after {d} items due to --max-items\n", .{total_fetched});
+    }
+    if (sub_truncated and sub_enabled) {
+        try stderr.print("issues list: sub-issues limited to {d}; additional sub-issues omitted\n", .{opts.sub_limit});
+    }
 
     return 0;
 }
@@ -444,11 +618,16 @@ fn buildVariables(
     default_state_filter: []const []const u8,
     page_size: usize,
     cursor: ?[]const u8,
+    sub_limit: ?usize,
 ) !std.json.Value {
     const page_size_i64 = std.math.cast(i64, page_size) orelse return error.InvalidLimit;
 
     var vars = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
     try vars.object.put("first", .{ .integer = page_size_i64 });
+    if (sub_limit) |limit_value| {
+        const limit_i64 = std.math.cast(i64, limit_value) orelse return error.InvalidLimit;
+        try vars.object.put("subLimit", .{ .integer = limit_i64 });
+    }
 
     var filter = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
     var team_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
@@ -538,6 +717,30 @@ fn buildVariables(
         var created_cmp = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
         try created_cmp.object.put("gt", .{ .string = trimmed });
         try filter.object.put("createdAt", created_cmp);
+    }
+
+    if (opts.project) |project_value| {
+        const trimmed = std.mem.trim(u8, project_value, " \t");
+        if (trimmed.len == 0) return error.InvalidProjectFilter;
+
+        var id_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+        try id_obj.object.put("eq", .{ .string = trimmed });
+
+        var project_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+        try project_obj.object.put("id", id_obj);
+        try filter.object.put("project", project_obj);
+    }
+
+    if (opts.milestone) |milestone_value| {
+        const trimmed = std.mem.trim(u8, milestone_value, " \t");
+        if (trimmed.len == 0) return error.InvalidMilestoneFilter;
+
+        var id_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+        try id_obj.object.put("eq", .{ .string = trimmed });
+
+        var milestone_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+        try milestone_obj.object.put("id", id_obj);
+        try filter.object.put("milestone", milestone_obj);
     }
 
     try vars.object.put("filter", filter);
@@ -660,6 +863,28 @@ pub fn parseOptions(args: []const []const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--project")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.project = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--project=")) {
+            opts.project = arg["--project=".len..];
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--milestone")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.milestone = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--milestone=")) {
+            opts.milestone = arg["--milestone=".len..];
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--updated-since")) {
             if (idx + 1 >= args.len) return error.MissingValue;
             opts.updated_since = args[idx + 1];
@@ -701,6 +926,28 @@ pub fn parseOptions(args: []const []const u8) !Options {
         }
         if (std.mem.startsWith(u8, arg, "--limit=")) {
             opts.limit = try std.fmt.parseInt(usize, arg["--limit=".len..], 10);
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--max-items")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.max_items = try std.fmt.parseInt(usize, args[idx + 1], 10);
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--max-items=")) {
+            opts.max_items = try std.fmt.parseInt(usize, arg["--max-items=".len..], 10);
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--sub-limit")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.sub_limit = try std.fmt.parseInt(usize, args[idx + 1], 10);
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--sub-limit=")) {
+            opts.sub_limit = try std.fmt.parseInt(usize, arg["--sub-limit=".len..], 10);
             idx += 1;
             continue;
         }
@@ -746,6 +993,11 @@ pub fn parseOptions(args: []const []const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--include-projects")) {
+            opts.include_projects = true;
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--plain")) {
             opts.plain = true;
             idx += 1;
@@ -781,21 +1033,26 @@ pub fn parseOptions(args: []const []const u8) !Options {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issues list [--team ID|KEY] [--state-type TYPES] [--state-id IDS] [--assignee USER_ID] [--label IDS] [--updated-since TS] [--sort FIELD[:asc|desc]] [--limit N] [--cursor CURSOR] [--pages N|--all] [--fields LIST] [--plain] [--no-truncate] [--human-time] [--quiet] [--data-only] [--help]
+        \\Usage: linear issues list [--team ID|KEY] [--state-type TYPES] [--state-id IDS] [--assignee USER_ID] [--label IDS] [--project ID] [--milestone ID] [--updated-since TS] [--sort FIELD[:asc|desc]] [--limit N] [--max-items N] [--sub-limit N] [--cursor CURSOR] [--pages N|--all] [--fields LIST] [--include-projects] [--plain] [--no-truncate] [--human-time] [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --team ID|KEY         Team id or key (default: config.default_team_id)
         \\  --state-type VALUES   Comma-separated state types to include (alias: --state; default: exclude completed,canceled)
         \\  --state-id IDS        Comma-separated workflow state ids to include (overrides default exclusion)
         \\  --assignee USER_ID    Filter by assignee id
         \\  --label IDS           Comma-separated label ids to include
+        \\  --project ID          Filter by project id
+        \\  --milestone ID        Filter by milestone id
         \\  --updated-since TS    Only include issues updated after the timestamp
         \\  --created-since TS    Only include issues created after the timestamp
         \\  --sort FIELD[:DIR]    Sort by created|updated (dir asc|desc, default: desc)
         \\  --limit N             Page size per request (default: 25)
+        \\  --max-items N         Stop after emitting N issues (may truncate within a page)
+        \\  --sub-limit N         Sub-issues to fetch per parent (0 disables sub-issues; default: 10)
         \\  --cursor CURSOR       Start pagination after the provided cursor
         \\  --pages N             Fetch up to N pages (default: 1)
         \\  --all                 Fetch all pages until the end
-        \\  --fields LIST         Comma-separated columns (identifier,title,state,assignee,priority,updated,parent,sub_issues)
+        \\  --fields LIST         Comma-separated columns (identifier,title,state,assignee,priority,updated,parent,sub_issues,project,milestone)
+        \\  --include-projects    Add project and milestone columns (also available via --fields)
         \\  --plain               Do not pad or truncate table cells
         \\  --no-truncate         Disable ellipsis and padding in table cells
         \\  --human-time          Render timestamps as relative values
@@ -856,7 +1113,8 @@ fn parseIssueFields(raw: ?[]const u8, buffer: *std.ArrayListUnmanaged(printer.Is
         if (buffer.items.len == 0) return error.InvalidField;
         return buffer.items;
     }
-    return printer.issue_default_fields[0..];
+    try buffer.appendSlice(allocator, printer.issue_default_fields[0..]);
+    return buffer.items;
 }
 
 fn parseIssueFieldName(name: []const u8) ?printer.IssueField {
@@ -867,6 +1125,8 @@ fn parseIssueFieldName(name: []const u8) ?printer.IssueField {
     if (std.ascii.eqlIgnoreCase(name, "priority")) return .priority;
     if (std.ascii.eqlIgnoreCase(name, "parent")) return .parent;
     if (std.ascii.eqlIgnoreCase(name, "sub_issues") or std.ascii.eqlIgnoreCase(name, "subIssues")) return .sub_issues;
+    if (std.ascii.eqlIgnoreCase(name, "project")) return .project;
+    if (std.ascii.eqlIgnoreCase(name, "milestone")) return .milestone;
     if (std.ascii.eqlIgnoreCase(name, "updated") or std.ascii.eqlIgnoreCase(name, "updatedAt")) return .updated;
     return null;
 }

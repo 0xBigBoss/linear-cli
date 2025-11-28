@@ -1,0 +1,33 @@
+{
+  "data": {
+    "issues": {
+      "nodes": [
+        {
+          "id": "issue-10",
+          "identifier": "LIN-210",
+          "title": "Parent with subs",
+          "state": { "name": "Todo", "type": "todo" },
+          "assignee": { "name": "Offline User" },
+          "priorityLabel": "Low",
+          "createdAt": "2024-05-13T00:00:00Z",
+          "updatedAt": "2024-05-14T00:00:00Z",
+          "url": "https://linear.app/example/issue/210",
+          "parent": { "identifier": "LIN-200", "url": "https://linear.app/example/issue/200" },
+          "children": {
+            "nodes": [
+              { "identifier": "LIN-211", "url": "https://linear.app/example/issue/211" },
+              { "identifier": "LIN-212", "url": "https://linear.app/example/issue/212" }
+            ],
+            "pageInfo": { "hasNextPage": true }
+          },
+          "project": { "name": "Offline Project" },
+          "milestone": { "title": "Milestone Alpha" }
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": "cursor-210"
+      }
+    }
+  }
+}
