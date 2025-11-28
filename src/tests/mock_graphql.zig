@@ -18,21 +18,44 @@ pub const MockResponse = struct {
     rate_limit: RateLimitInfoInternal = .{},
 };
 
+const ResponseSeries = struct {
+    allocator: Allocator,
+    responses: std.ArrayListUnmanaged(MockResponse),
+    next: usize = 0,
+
+    fn deinit(self: ResponseSeries) void {
+        for (self.responses.items) |resp| {
+            self.allocator.free(resp.body);
+        }
+        var list = self.responses;
+        list.deinit(self.allocator);
+    }
+
+    fn take(self: *ResponseSeries) MockResponse {
+        const idx = @min(self.next, self.responses.items.len - 1);
+        const resp = self.responses.items[idx];
+        if (self.next + 1 < self.responses.items.len) {
+            self.next += 1;
+        }
+        return resp;
+    }
+};
+
 pub const MockServer = struct {
     allocator: Allocator,
-    fixtures: std.StringHashMap(MockResponse),
+    fixtures: std.StringHashMap(ResponseSeries),
 
     pub fn init(allocator: Allocator) MockServer {
         return .{
             .allocator = allocator,
-            .fixtures = std.StringHashMap(MockResponse).init(allocator),
+            .fixtures = std.StringHashMap(ResponseSeries).init(allocator),
         };
     }
 
     pub fn deinit(self: *MockServer) void {
         var it = self.fixtures.iterator();
         while (it.next()) |entry| {
-            self.allocator.free(entry.value_ptr.body);
+            entry.value_ptr.*.deinit();
         }
         self.fixtures.deinit();
     }
@@ -42,16 +65,49 @@ pub const MockServer = struct {
     }
 
     pub fn setWithStatus(self: *MockServer, operation: []const u8, payload: []const u8, status: u16) !void {
-        const duped = try self.allocator.dupe(u8, payload);
-        errdefer self.allocator.free(duped);
+        const response = MockResponse{ .body = payload, .status = status };
+        try self.setResponses(operation, &.{response});
+    }
 
-        if (try self.fixtures.fetchPut(operation, .{ .body = duped, .status = status })) |entry| {
-            self.allocator.free(entry.value.body);
+    pub fn setResponses(self: *MockServer, operation: []const u8, responses: []const MockResponse) !void {
+        var list = std.ArrayListUnmanaged(MockResponse){};
+        errdefer {
+            for (list.items) |item| {
+                self.allocator.free(item.body);
+            }
+            list.deinit(self.allocator);
+        }
+
+        for (responses) |resp| {
+            const duped = try self.allocator.dupe(u8, resp.body);
+            try list.append(self.allocator, .{ .body = duped, .status = resp.status, .rate_limit = resp.rate_limit });
+        }
+
+        const series = ResponseSeries{
+            .allocator = self.allocator,
+            .responses = list,
+            .next = 0,
+        };
+
+        if (try self.fixtures.fetchPut(operation, series)) |previous| {
+            previous.value.deinit();
         }
     }
 
-    fn lookup(self: *const MockServer, operation: []const u8) ?MockResponse {
-        return self.fixtures.get(operation);
+    pub fn setSequence(self: *MockServer, operation: []const u8, payloads: []const []const u8) !void {
+        var responses = try self.allocator.alloc(MockResponse, payloads.len);
+        defer self.allocator.free(responses);
+        for (payloads, 0..) |payload, idx| {
+            responses[idx] = .{ .body = payload };
+        }
+        try self.setResponses(operation, responses);
+    }
+
+    fn lookup(self: *MockServer, operation: []const u8) ?MockResponse {
+        if (self.fixtures.getPtr(operation)) |entry| {
+            return entry.take();
+        }
+        return null;
     }
 };
 

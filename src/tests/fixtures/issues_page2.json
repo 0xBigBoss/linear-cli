@@ -1,0 +1,22 @@
+{
+  "data": {
+    "issues": {
+      "nodes": [
+        {
+          "id": "issue-3",
+          "identifier": "LIN-103",
+          "title": "Third offline issue",
+          "state": { "name": "Done", "type": "completed" },
+          "assignee": null,
+          "priorityLabel": "Low",
+          "updatedAt": "2024-05-12T09:00:00Z",
+          "url": "https://linear.app/example/issue/3"
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": "cursor-3"
+      }
+    }
+  }
+}

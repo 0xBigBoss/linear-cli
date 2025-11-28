@@ -13,6 +13,7 @@ pub const Context = struct {
     json_output: bool,
     retries: u8,
     timeout_ms: u32,
+    endpoint: ?[]const u8 = null,
 };
 
 const Options = struct {
@@ -23,6 +24,7 @@ const Options = struct {
     state: ?[]const u8 = null,
     assignee: ?[]const u8 = null,
     labels: ?[]const u8 = null,
+    yes: bool = false,
     help: bool = false,
     quiet: bool = false,
     data_only: bool = false,
@@ -67,6 +69,7 @@ pub fn run(ctx: Context) !u8 {
     defer client.deinit();
     client.max_retries = ctx.retries;
     client.timeout_ms = ctx.timeout_ms;
+    if (ctx.endpoint) |ep| client.endpoint = ep;
 
     const team_id = resolveTeamId(ctx, &client, opts.team.?, stderr) catch |err| {
         try stderr.print("issue create: {s}\n", .{@errorName(err)});
@@ -111,6 +114,11 @@ pub fn run(ctx: Context) !u8 {
     var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
     try variables.object.put("input", input);
 
+    if (!opts.yes) {
+        try stderr.print("issue create: confirmation required; re-run with --yes to proceed\n", .{});
+        return 1;
+    }
+
     const mutation =
         \\mutation IssueCreate($input: IssueCreateInput!) {
         \\  issueCreate(input: $input) {
@@ -121,9 +129,7 @@ pub fn run(ctx: Context) !u8 {
         \\      title
         \\      url
         \\    }
-        \\    userError {
-        \\      message
-        \\    }
+        \\    lastSyncId
         \\  }
         \\}
     ;
@@ -157,25 +163,36 @@ pub fn run(ctx: Context) !u8 {
         try stderr.print("issue create: issueCreate missing in response\n", .{});
         return 1;
     };
-    if (!(common.getBoolField(payload, "success") orelse false)) {
-        if (common.getObjectField(payload, "userError")) |err_obj| {
-            if (common.getStringField(err_obj, "message")) |msg| {
-                try stderr.print("issue create: {s}\n", .{msg});
+
+    const success = common.getBoolField(payload, "success") orelse false;
+    const issue_obj = common.getObjectField(payload, "issue");
+    if (!success) {
+        if (payload.object.get("userError")) |user_error| {
+            if (user_error == .string) {
+                try stderr.print("issue create: {s}\n", .{user_error.string});
                 return 1;
+            }
+            if (user_error == .object) {
+                if (user_error.object.get("message")) |msg| {
+                    if (msg == .string) {
+                        try stderr.print("issue create: {s}\n", .{msg.string});
+                        return 1;
+                    }
+                }
             }
         }
         try stderr.print("issue create: request failed\n", .{});
         return 1;
     }
 
-    const issue_obj = common.getObjectField(payload, "issue") orelse {
+    const issue = issue_obj orelse {
         try stderr.print("issue create: issue missing in response\n", .{});
         return 1;
     };
 
-    const identifier = common.getStringField(issue_obj, "identifier") orelse "(unknown)";
-    const title_value = common.getStringField(issue_obj, "title") orelse opts.title.?;
-    const url = common.getStringField(issue_obj, "url") orelse "";
+    const identifier = common.getStringField(issue, "identifier") orelse "(unknown)";
+    const title_value = common.getStringField(issue, "title") orelse opts.title.?;
+    const url = common.getStringField(issue, "url") orelse "";
 
     const pairs = [_]printer.KeyValue{
         .{ .key = "Identifier", .value = identifier },
@@ -392,6 +409,11 @@ pub fn parseOptions(args: []const []const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--yes") or std.mem.eql(u8, arg, "--force")) {
+            opts.yes = true;
+            idx += 1;
+            continue;
+        }
         if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
         return error.UnexpectedArgument;
     }
@@ -400,7 +422,7 @@ pub fn parseOptions(args: []const []const u8) !Options {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--quiet] [--data-only] [--help]
+        \\Usage: linear issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--yes] [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --team ID|KEY        Team id or key (required)
         \\  --title TITLE        Issue title (required)
@@ -409,6 +431,7 @@ pub fn usage(writer: anytype) !void {
         \\  --state STATE_ID     State id to apply
         \\  --assignee USER_ID   Assignee id
         \\  --labels LIST        Comma-separated label ids
+        \\  --yes                Skip confirmation prompt (alias: --force)
         \\  --quiet              Print only the identifier
         \\  --data-only          Emit tab-separated fields without formatting (or JSON object with --json)
         \\  --help               Show this help message

@@ -1,0 +1,12 @@
+{
+  "data": {
+    "issueDelete": {
+      "success": true,
+      "entity": {
+        "id": "issue-del-1",
+        "identifier": "LIN-300"
+      },
+      "lastSyncId": 99
+    }
+  }
+}

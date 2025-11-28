@@ -21,6 +21,7 @@ Single-binary Linear client built with Zig 0.15.2. Uses stdlib only, defaults to
 Global flags:
 - `--json` — force JSON output (default follows `config.default_output`)
 - `--config PATH` or env `LINEAR_CONFIG` — choose config file
+- `--endpoint URL` — override the GraphQL endpoint (useful for QA/mocking)
 - `--retries N` — retry 5xx responses up to N times with a small backoff
 - `--timeout-ms MS` — request timeout flag (plumbed for future enforcement)
 - `--no-keepalive` — disable HTTP keep-alive reuse
@@ -33,9 +34,10 @@ Commands:
 - `auth show [--redacted]` — view the configured key (masked when requested).
 - `me` — show current user.
 - `teams list [--fields id,key,name] [--plain] [--no-truncate]` — list teams with optional column and formatting controls.
-- `issues list [--team ID|KEY] [--state TYPES] [--limit N] [--cursor CURSOR] [--pages N|--all] [--fields ...] [--plain] [--no-truncate] [--human-time]` — defaults to the config team; excludes completed/canceled unless `--state` is provided; paginates with cursor support and prints a fetched-page summary plus pageInfo.
-- `issue view <ID|IDENTIFIER> [--quiet] [--data-only]` — show a single issue; `--quiet` prints only the identifier, `--data-only` emits tab-separated fields or JSON.
-- `issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--quiet] [--data-only]` — resolves team key to id when needed, caches lookups, and returns identifier/url.
+- `issues list [--team ID|KEY] [--state TYPES] [--created-since TS] [--updated-since TS] [--limit N] [--cursor CURSOR] [--pages N|--all] [--fields ...] [--plain] [--no-truncate] [--human-time]` — defaults to the config team; excludes completed/canceled unless `--state` is provided; supports parent/sub-issue columns and paginates with cursor support plus page summaries.
+- `issue view <ID|IDENTIFIER> [--fields LIST] [--quiet] [--data-only] [--human-time]` — show a single issue; `--fields` filters output (identifier,title,state,assignee,priority,url,created_at,updated_at,description); `--quiet` prints only the identifier, `--data-only` emits tab-separated fields or JSON.
+- `issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--yes] [--quiet] [--data-only]` — resolves team key to id when needed, caches lookups, and returns identifier/url; requires `--yes`/`--force` to proceed (otherwise exits with a message).
+- `issue delete <ID|IDENTIFIER> [--yes] [--quiet] [--data-only]` — archives an issue by id/identifier; requires `--yes`/`--force` to proceed.
 - `gql [--query FILE] [--vars JSON|--vars-file FILE] [--operation-name NAME] [--fields LIST] [--data-only]` — arbitrary GraphQL; non-zero on HTTP/GraphQL errors.
 
 ## Output

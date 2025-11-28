@@ -1,0 +1,9 @@
+{
+  "data": {
+    "teams": {
+      "nodes": [
+        { "id": "team-id-123" }
+      ]
+    }
+  }
+}

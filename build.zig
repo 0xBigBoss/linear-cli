@@ -149,6 +149,26 @@ pub fn build(b: *std.Build) void {
     issue_create_test_mod.addImport("common", common_test_mod);
     tests_mod.addImport("issue_create_test", issue_create_test_mod);
 
+    const issue_delete_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/issue_delete.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    issue_delete_mod.addImport("config", config_mod);
+    issue_delete_mod.addImport("graphql", graphql_mod);
+    issue_delete_mod.addImport("printer", printer_mod);
+    issue_delete_mod.addImport("common", common_mod);
+    const issue_delete_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/issue_delete.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    issue_delete_test_mod.addImport("config", config_mod);
+    issue_delete_test_mod.addImport("graphql", graphql_mock_mod);
+    issue_delete_test_mod.addImport("printer", printer_mod);
+    issue_delete_test_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("issue_delete_test", issue_delete_test_mod);
+
     const issue_view_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/issue_view.zig"),
         .target = target,

@@ -13,6 +13,7 @@ pub const Context = struct {
     json_output: bool,
     retries: u8,
     timeout_ms: u32,
+    endpoint: ?[]const u8 = null,
 };
 
 const SortField = enum {
@@ -37,6 +38,7 @@ const Options = struct {
     assignee: ?[]const u8 = null,
     label: ?[]const u8 = null,
     updated_since: ?[]const u8 = null,
+    created_since: ?[]const u8 = null,
     sort: ?Sort = null,
     limit: usize = 25,
     cursor: ?[]const u8 = null,
@@ -57,6 +59,10 @@ const DataRow = struct {
     state: []const u8,
     assignee: []const u8,
     priority: []const u8,
+    parent_identifier: []const u8,
+    parent_url: []const u8,
+    sub_issue_identifiers: []const u8,
+    created_raw: []const u8,
     updated_raw: []const u8,
     url: []const u8,
 };
@@ -66,7 +72,13 @@ pub fn run(ctx: Context) !u8 {
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
     var stderr = &stderr_writer.interface;
     const opts = parseOptions(ctx.args) catch |err| {
-        try stderr.print("issues list: {s}\n", .{@errorName(err)});
+        const message = switch (err) {
+            error.InvalidPageCount => "invalid --pages value",
+            error.InvalidLimit => "invalid --limit value",
+            error.InvalidSort => "invalid --sort value",
+            else => @errorName(err),
+        };
+        try stderr.print("issues list: {s}\n", .{message});
         try usage(stderr);
         return 1;
     };
@@ -118,8 +130,11 @@ pub fn run(ctx: Context) !u8 {
         \\      state { name type }
         \\      assignee { name }
         \\      priorityLabel
+        \\      createdAt
         \\      updatedAt
         \\      url
+        \\      parent { identifier url }
+        \\      subIssues(first: 10) { nodes { identifier url } }
         \\    }
         \\    pageInfo {
         \\      hasNextPage
@@ -133,10 +148,7 @@ pub fn run(ctx: Context) !u8 {
     defer client.deinit();
     client.max_retries = ctx.retries;
     client.timeout_ms = ctx.timeout_ms;
-
-    const page_limit: ?usize = if (opts.all) null else opts.pages orelse 1;
-    var remaining = opts.limit;
-    var next_cursor = opts.cursor;
+    if (ctx.endpoint) |ep| client.endpoint = ep;
 
     var responses = std.ArrayListUnmanaged(graphql.GraphqlClient.Response){};
     defer {
@@ -146,6 +158,12 @@ pub fn run(ctx: Context) !u8 {
 
     var rows = std.ArrayListUnmanaged(printer.IssueRow){};
     defer rows.deinit(ctx.allocator);
+
+    var owned_times = std.ArrayListUnmanaged([]u8){};
+    defer {
+        for (owned_times.items) |value| ctx.allocator.free(value);
+        owned_times.deinit(ctx.allocator);
+    }
 
     var data_rows = std.ArrayListUnmanaged(DataRow){};
     defer data_rows.deinit(ctx.allocator);
@@ -157,16 +175,18 @@ pub fn run(ctx: Context) !u8 {
     var page_count: usize = 0;
     var more_available = false;
     var last_end_cursor: ?[]const u8 = null;
+    const page_size = opts.limit;
+    var next_cursor = opts.cursor;
     const want_table = !ctx.json_output and !opts.data_only and !opts.quiet;
     const want_data_rows = opts.data_only or opts.quiet;
     const want_raw_nodes = ctx.json_output and !opts.data_only and !opts.quiet;
+    const page_limit: ?usize = if (opts.all) null else opts.pages orelse 1;
 
-    while (remaining > 0) {
+    while (true) {
         if (page_limit) |limit_pages| {
             if (page_count >= limit_pages) break;
         }
 
-        const page_size = remaining;
         const variables = buildVariables(
             var_alloc,
             team_value,
@@ -211,12 +231,11 @@ pub fn run(ctx: Context) !u8 {
             return 1;
         };
 
-        const take_count = @min(nodes_array.items.len, remaining);
+        const take_count = @min(nodes_array.items.len, page_size);
         const page_nodes = nodes_array.items[0..take_count];
 
         total_fetched += take_count;
         page_count += 1;
-        remaining -= take_count;
 
         if (want_raw_nodes) {
             try nodes_accumulator.appendSlice(ctx.allocator, page_nodes);
@@ -236,13 +255,40 @@ pub fn run(ctx: Context) !u8 {
                 const assignee_name = if (assignee_obj) |assignee| common.getStringField(assignee, "name") else null;
                 const assignee_value = assignee_name orelse "(unassigned)";
                 const priority = common.getStringField(node, "priorityLabel") orelse "";
+                const created_raw = common.getStringField(node, "createdAt") orelse "";
                 const updated_raw = common.getStringField(node, "updatedAt") orelse "";
                 const url = common.getStringField(node, "url") orelse "";
+                const parent_obj = common.getObjectField(node, "parent");
+                const parent_identifier = if (parent_obj) |p| common.getStringField(p, "identifier") else null;
+                const parent_url = if (parent_obj) |p| common.getStringField(p, "url") else null;
+                const parent_display = parent_identifier orelse "";
+                var sub_display: []const u8 = "";
+                if (common.getObjectField(node, "subIssues")) |subs| {
+                    if (common.getArrayField(subs, "nodes")) |sub_nodes| {
+                        var joined = std.ArrayListUnmanaged(u8){};
+                        defer joined.deinit(ctx.allocator);
+                        for (sub_nodes.items, 0..) |sub, idx| {
+                            if (sub != .object) continue;
+                            const sub_ident = common.getStringField(sub, "identifier") orelse continue;
+                            if (idx > 0) try joined.appendSlice(ctx.allocator, ", ");
+                            try joined.appendSlice(ctx.allocator, sub_ident);
+                        }
+                        if (joined.items.len > 0) {
+                            const owned = try joined.toOwnedSlice(ctx.allocator);
+                            try owned_times.append(ctx.allocator, owned);
+                            sub_display = owned;
+                        }
+                    }
+                }
 
-                const updated_display = if (opts.human_time and want_table)
-                    printer.humanTime(ctx.allocator, updated_raw, null) catch updated_raw
-                else
-                    updated_raw;
+                var updated_display = updated_raw;
+                if (opts.human_time and want_table) {
+                    const formatted = printer.humanTime(ctx.allocator, updated_raw, null) catch null;
+                    if (formatted) |value| {
+                        try owned_times.append(ctx.allocator, value);
+                        updated_display = value;
+                    }
+                }
 
                 if (want_table) {
                     try rows.append(ctx.allocator, .{
@@ -251,6 +297,8 @@ pub fn run(ctx: Context) !u8 {
                         .state = state_value,
                         .assignee = assignee_value,
                         .priority = priority,
+                        .parent = parent_display,
+                        .sub_issues = sub_display,
                         .updated = updated_display,
                     });
                 }
@@ -262,6 +310,10 @@ pub fn run(ctx: Context) !u8 {
                         .state = state_value,
                         .assignee = assignee_value,
                         .priority = priority,
+                        .parent_identifier = parent_identifier orelse "",
+                        .parent_url = parent_url orelse "",
+                        .sub_issue_identifiers = sub_display,
+                        .created_raw = created_raw,
                         .updated_raw = updated_raw,
                         .url = url,
                     });
@@ -282,7 +334,6 @@ pub fn run(ctx: Context) !u8 {
         }
 
         if (!has_next) break;
-        if (remaining == 0) break;
         if (page_limit) |limit_pages| {
             if (page_count >= limit_pages) break;
         }
@@ -312,6 +363,24 @@ pub fn run(ctx: Context) !u8 {
                 try obj.object.put("state", .{ .string = row.state });
                 try obj.object.put("assignee", .{ .string = row.assignee });
                 try obj.object.put("priority", .{ .string = row.priority });
+                if (row.parent_identifier.len > 0) {
+                    try obj.object.put("parent_identifier", .{ .string = row.parent_identifier });
+                }
+                if (row.parent_url.len > 0) {
+                    try obj.object.put("parent_url", .{ .string = row.parent_url });
+                }
+                if (row.sub_issue_identifiers.len > 0) {
+                    var subs = std.json.Array.init(var_alloc);
+                    var iter = std.mem.splitSequence(u8, row.sub_issue_identifiers, ", ");
+                    while (iter.next()) |entry| {
+                        if (entry.len == 0) continue;
+                        try subs.append(.{ .string = entry });
+                    }
+                    try obj.object.put("sub_issue_identifiers", .{ .array = subs });
+                }
+                if (row.created_raw.len > 0) {
+                    try obj.object.put("created_at", .{ .string = row.created_raw });
+                }
                 try obj.object.put("updated_at", .{ .string = row.updated_raw });
                 try obj.object.put("url", .{ .string = row.url });
                 try out_array.append(obj);
@@ -462,6 +531,15 @@ fn buildVariables(
         try filter.object.put("updatedAt", updated_cmp);
     }
 
+    if (opts.created_since) |created_value| {
+        const trimmed = std.mem.trim(u8, created_value, " \t");
+        if (trimmed.len == 0) return error.InvalidCreatedSinceFilter;
+
+        var created_cmp = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+        try created_cmp.object.put("gt", .{ .string = trimmed });
+        try filter.object.put("createdAt", created_cmp);
+    }
+
     try vars.object.put("filter", filter);
     if (cursor) |cursor_value| try vars.object.put("after", .{ .string = cursor_value });
     if (opts.sort) |sort| {
@@ -593,6 +671,17 @@ pub fn parseOptions(args: []const []const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--created-since")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.created_since = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--created-since=")) {
+            opts.created_since = arg["--created-since=".len..];
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--sort")) {
             if (idx + 1 >= args.len) return error.MissingValue;
             opts.sort = try parseSort(args[idx + 1]);
@@ -685,6 +774,7 @@ pub fn parseOptions(args: []const []const u8) !Options {
         if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
         return error.UnexpectedArgument;
     }
+    if (opts.limit == 0) return error.InvalidLimit;
     if (opts.all and opts.pages != null) return error.ConflictingPageFlags;
     return opts;
 }
@@ -699,12 +789,13 @@ pub fn usage(writer: anytype) !void {
         \\  --assignee USER_ID    Filter by assignee id
         \\  --label IDS           Comma-separated label ids to include
         \\  --updated-since TS    Only include issues updated after the timestamp
+        \\  --created-since TS    Only include issues created after the timestamp
         \\  --sort FIELD[:DIR]    Sort by created|updated (dir asc|desc, default: desc)
-        \\  --limit N             Max issues to fetch (default: 25)
+        \\  --limit N             Page size per request (default: 25)
         \\  --cursor CURSOR       Start pagination after the provided cursor
-        \\  --pages N             Fetch up to N pages (default: 1; stops early at limit)
-        \\  --all                 Fetch all pages until the end or the limit
-        \\  --fields LIST         Comma-separated columns (identifier,title,state,assignee,priority,updated)
+        \\  --pages N             Fetch up to N pages (default: 1)
+        \\  --all                 Fetch all pages until the end
+        \\  --fields LIST         Comma-separated columns (identifier,title,state,assignee,priority,updated,parent,sub_issues)
         \\  --plain               Do not pad or truncate table cells
         \\  --no-truncate         Disable ellipsis and padding in table cells
         \\  --human-time          Render timestamps as relative values
@@ -774,6 +865,8 @@ fn parseIssueFieldName(name: []const u8) ?printer.IssueField {
     if (std.ascii.eqlIgnoreCase(name, "state")) return .state;
     if (std.ascii.eqlIgnoreCase(name, "assignee")) return .assignee;
     if (std.ascii.eqlIgnoreCase(name, "priority")) return .priority;
+    if (std.ascii.eqlIgnoreCase(name, "parent")) return .parent;
+    if (std.ascii.eqlIgnoreCase(name, "sub_issues") or std.ascii.eqlIgnoreCase(name, "subIssues")) return .sub_issues;
     if (std.ascii.eqlIgnoreCase(name, "updated") or std.ascii.eqlIgnoreCase(name, "updatedAt")) return .updated;
     return null;
 }

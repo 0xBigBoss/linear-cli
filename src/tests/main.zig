@@ -8,9 +8,12 @@ const env_name_z = "LINEAR_API_KEY\x00";
 const config_env_name = "LINEAR_CONFIG";
 const config_env_name_z = "LINEAR_CONFIG\x00";
 const config = @import("config");
+const cli = @import("cli");
 const gql = @import("gql");
 const issues_cmd = @import("issues_test");
 const issue_create_cmd = @import("issue_create_test");
+const issue_view_cmd = @import("issue_view_test");
+const issue_delete_cmd = @import("issue_delete_test");
 const me_cmd = @import("me_test");
 const teams_cmd = @import("teams_test");
 const printer = @import("printer");
@@ -18,6 +21,7 @@ const graphql = @import("graphql");
 const mock_graphql = @import("graphql_mock");
 const fixtures = struct {
     pub const issues_response = @embedFile("fixtures/issues.json");
+    pub const issues_page2_response = @embedFile("fixtures/issues_page2.json");
     pub const issues_table = @embedFile("fixtures/issues_table.txt");
     pub const issues_json = @embedFile("fixtures/issues_json.txt");
     pub const issues_pagination_stderr = @embedFile("fixtures/issues_pagination_stderr.txt");
@@ -25,6 +29,10 @@ const fixtures = struct {
     pub const teams_table = @embedFile("fixtures/teams_table.txt");
     pub const viewer_response = @embedFile("fixtures/viewer.json");
     pub const viewer_table = @embedFile("fixtures/me_table.txt");
+    pub const issue_create_team_lookup = @embedFile("fixtures/issue_create_team_lookup.json");
+    pub const issue_create_response = @embedFile("fixtures/issue_create_response.json");
+    pub const issue_delete_response = @embedFile("fixtures/issue_delete_response.json");
+    pub const issue_view_response = @embedFile("fixtures/issue_view.json");
 };
 
 test "config save and load roundtrip" {
@@ -259,6 +267,29 @@ test "parse issue create options" {
     try std.testing.expect(opts.data_only);
 }
 
+test "global flags parsed after subcommand" {
+    const allocator = std.testing.allocator;
+    var opts = cli.GlobalOptions{};
+    const args = [_][]const u8{ "issues", "list", "--json", "--timeout-ms", "2000" };
+    const cleaned = try cli.stripTrailingGlobals(allocator, args[0..], &opts);
+    defer allocator.free(cleaned);
+
+    try std.testing.expect(opts.json);
+    try std.testing.expectEqual(@as(u32, 2000), opts.timeout_ms);
+    try std.testing.expectEqual(@as(usize, 2), cleaned.len);
+    try std.testing.expectEqualStrings("issues", cleaned[0]);
+    try std.testing.expectEqualStrings("list", cleaned[1]);
+}
+
+test "endpoint flag parsed from globals" {
+    var args = [_][]const u8{ "linear", "--endpoint", "http://localhost:3000/mock", "issues" };
+    const parsed = try cli.parseGlobal(args[0..]);
+    try std.testing.expect(parsed.opts.endpoint != null);
+    try std.testing.expectEqualStrings("http://localhost:3000/mock", parsed.opts.endpoint.?);
+    try std.testing.expectEqual(@as(usize, 1), parsed.rest.len);
+    try std.testing.expectEqualStrings("issues", parsed.rest[0]);
+}
+
 test "printer issue table includes headers" {
     const allocator = std.testing.allocator;
     var buffer = std.ArrayListUnmanaged(u8){};
@@ -271,6 +302,8 @@ test "printer issue table includes headers" {
             .state = "todo",
             .assignee = "None",
             .priority = "High",
+            .parent = "",
+            .sub_issues = "",
             .updated = "2024-05-10T12:00:00Z",
         },
     };
@@ -308,6 +341,8 @@ test "printer issue table plain preserves long values" {
             .state = "todo",
             .assignee = "None",
             .priority = "High",
+            .parent = "",
+            .sub_issues = "",
             .updated = "2024-05-10T12:00:00Z",
         },
     };
@@ -338,6 +373,71 @@ test "printJsonFields filters root object" {
 
     try printer.printJsonFields(obj, &out.writer, true, &.{"b"});
     try std.testing.expectEqualStrings("{\n  \"b\": \"2\"\n}\n", out.written());
+}
+
+test "gql fields filter data without data-only" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var query_file = try tmp.dir.createFile("viewer.graphql", .{ .read = true, .truncate = true });
+    defer query_file.close();
+    try query_file.writeAll("query Viewer { viewer { id name email } }");
+    const query_path = try tmp.dir.realpathAlloc(allocator, "viewer.graphql");
+    defer allocator.free(query_path);
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("Viewer", fixtures.viewer_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+        query: []const u8,
+    };
+    const runGql = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{
+                "--query",
+                r.query,
+                "--operation-name",
+                "Viewer",
+                "--fields",
+                "viewer",
+            };
+            return gql.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .json_output = false,
+                .retries = 0,
+                .timeout_ms = 10_000,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg, .query = query_path };
+
+    const capture = try captureOutput(allocator, &runner, runGql);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    const expected =
+        \\{
+        \\  "viewer": {
+        \\    "id": "user-1",
+        \\    "name": "Offline User",
+        \\    "email": "offline@example.com"
+        \\  }
+        \\}
+        \\
+    ;
+    try std.testing.expectEqualStrings(expected, capture.stdout);
+    try std.testing.expectEqualStrings("", capture.stderr);
 }
 
 test "parse issues all without pages" {
@@ -530,6 +630,85 @@ test "issues list prints json output with mock graphql" {
     try std.testing.expectEqualStrings("", capture.stderr);
 }
 
+test "issues list paginates across pages when multiple requests allowed" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.setSequence("Issues", &.{ fixtures.issues_response, fixtures.issues_page2_response });
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runIssues = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "--limit", "3", "--pages", "2" };
+            return issues_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runIssues);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "LIN-101") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "LIN-102") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "LIN-103") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "across 2 page") != null);
+}
+
+test "issues list quiet prints identifiers only to stdout" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("Issues", fixtures.issues_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runIssues = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "--limit", "2", "--quiet" };
+            return issues_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runIssues);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqualStrings("LIN-101\nLIN-102\n", capture.stdout);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "fetched 2 items") != null);
+}
+
 test "teams list renders table with mock graphql" {
     const allocator = std.testing.allocator;
 
@@ -605,6 +784,130 @@ test "me prints viewer table with mock graphql" {
 
     try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
     try std.testing.expectEqualStrings(fixtures.viewer_table, capture.stdout);
+    try std.testing.expectEqualStrings("", capture.stderr);
+}
+
+test "issue create succeeds with quiet output" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueCreate", fixtures.issue_create_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runCreate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{
+                "--team",
+                "123e4567-e89b-12d3-a456-426614174000",
+                "--title",
+                "Example created issue",
+                "--yes",
+                "--quiet",
+            };
+            return issue_create_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runCreate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings("LIN-200\n", capture.stdout);
+    try std.testing.expectEqualStrings("", capture.stderr);
+}
+
+test "issue delete prints identifier and id" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueDelete", fixtures.issue_delete_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runDelete = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-300", "--yes" };
+            return issue_delete_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runDelete);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings("Identifier: LIN-300\nID        : issue-del-1\n", capture.stdout);
+    try std.testing.expectEqualStrings("", capture.stderr);
+}
+
+test "issue view filters fields" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueView", fixtures.issue_view_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runView = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-500", "--fields", "identifier,title", "--data-only" };
+            return issue_view_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = true,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runView);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings("{\n  \"identifier\": \"LIN-500\",\n  \"title\": \"Example issue\"\n}\n", capture.stdout);
     try std.testing.expectEqualStrings("", capture.stderr);
 }
 

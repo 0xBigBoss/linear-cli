@@ -18,6 +18,7 @@ pub const Context = struct {
     config_path: ?[]const u8,
     retries: u8,
     timeout_ms: u32,
+    endpoint: ?[]const u8 = null,
 };
 
 const SetOptions = struct {
@@ -163,6 +164,7 @@ fn runTest(ctx: Context, args: [][]const u8) !u8 {
     defer client.deinit();
     client.max_retries = ctx.retries;
     client.timeout_ms = ctx.timeout_ms;
+    if (ctx.endpoint) |ep| client.endpoint = ep;
 
     const query =
         \\query Viewer {

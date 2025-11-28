@@ -11,6 +11,7 @@ const teams_command = @import("commands/teams.zig");
 const issues_command = @import("commands/issues.zig");
 const issue_view_command = @import("commands/issue_view.zig");
 const issue_create_command = @import("commands/issue_create.zig");
+const issue_delete_command = @import("commands/issue_delete.zig");
 
 const version_string = "0.0.1-dev";
 const GlobalOptions = cli.GlobalOptions;
@@ -55,7 +56,34 @@ fn run() !u8 {
         try printUsage(&usage_writer.interface);
         return 1;
     };
-    const opts = parsed.opts;
+    var opts = parsed.opts;
+
+    const cleaned_rest = cli.stripTrailingGlobals(allocator, parsed.rest, &opts) catch |err| {
+        try stderr.print("error: {s}\n", .{@errorName(err)});
+        var out_buf: [0]u8 = undefined;
+        var usage_writer = std.fs.File.stderr().writer(&out_buf);
+        try printUsage(&usage_writer.interface);
+        return 1;
+    };
+    defer allocator.free(cleaned_rest);
+
+    if (cleaned_rest.len == 0) {
+        var out_buf: [0]u8 = undefined;
+        var usage_writer = std.fs.File.stderr().writer(&out_buf);
+        try printUsage(&usage_writer.interface);
+        return 1;
+    }
+
+    const subcommand = cleaned_rest[0];
+    const sub_args_raw = cleaned_rest[1..];
+    const sub_args = cli.stripTrailingGlobals(allocator, sub_args_raw, &opts) catch |err| {
+        try stderr.print("error: {s}\n", .{@errorName(err)});
+        var out_buf: [0]u8 = undefined;
+        var usage_writer = std.fs.File.stderr().writer(&out_buf);
+        try printUsage(&usage_writer.interface);
+        return 1;
+    };
+    defer allocator.free(sub_args);
 
     graphql.setDefaultKeepAlive(opts.keep_alive);
 
@@ -64,15 +92,15 @@ fn run() !u8 {
         return 0;
     }
 
-    if (parsed.rest.len > 0 and std.mem.eql(u8, parsed.rest[0], "help")) {
-        return routeHelp(parsed.rest[1..], stderr);
+    if (std.mem.eql(u8, subcommand, "help")) {
+        return routeHelp(sub_args, stderr);
     }
 
-    if (opts.help or parsed.rest.len == 0) {
+    if (opts.help) {
         var out_buf: [0]u8 = undefined;
         var usage_writer = std.fs.File.stdout().writer(&out_buf);
         try printUsage(&usage_writer.interface);
-        return if (opts.help) 0 else 1;
+        return 0;
     }
 
     var cfg = config.load(allocator, opts.config_path) catch |err| {
@@ -87,9 +115,6 @@ fn run() !u8 {
 
     const json_output = opts.json or std.ascii.eqlIgnoreCase(cfg.default_output, "json");
 
-    const subcommand = parsed.rest[0];
-    const sub_args = parsed.rest[1..];
-
     if (std.mem.eql(u8, subcommand, "gql")) {
         return gql_command.run(.{
             .allocator = allocator,
@@ -98,6 +123,7 @@ fn run() !u8 {
             .json_output = json_output,
             .retries = opts.retries,
             .timeout_ms = opts.timeout_ms,
+            .endpoint = opts.endpoint,
         });
     }
 
@@ -110,6 +136,7 @@ fn run() !u8 {
             .config_path = opts.config_path,
             .retries = opts.retries,
             .timeout_ms = opts.timeout_ms,
+            .endpoint = opts.endpoint,
         });
     }
 
@@ -121,6 +148,7 @@ fn run() !u8 {
             .json_output = json_output,
             .retries = opts.retries,
             .timeout_ms = opts.timeout_ms,
+            .endpoint = opts.endpoint,
         });
     }
 
@@ -137,6 +165,7 @@ fn run() !u8 {
             .json_output = json_output,
             .retries = opts.retries,
             .timeout_ms = opts.timeout_ms,
+            .endpoint = opts.endpoint,
         });
     }
 
@@ -153,6 +182,7 @@ fn run() !u8 {
             .json_output = json_output,
             .retries = opts.retries,
             .timeout_ms = opts.timeout_ms,
+            .endpoint = opts.endpoint,
         });
     }
 
@@ -172,6 +202,7 @@ fn run() !u8 {
                 .json_output = json_output,
                 .retries = opts.retries,
                 .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
             });
         }
         if (std.mem.eql(u8, issue_sub, "create")) {
@@ -182,6 +213,18 @@ fn run() !u8 {
                 .json_output = json_output,
                 .retries = opts.retries,
                 .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
+            });
+        }
+        if (std.mem.eql(u8, issue_sub, "delete")) {
+            return issue_delete_command.run(.{
+                .allocator = allocator,
+                .config = &cfg,
+                .args = issue_args,
+                .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
             });
         }
 
@@ -252,10 +295,16 @@ fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
                 try issue_create_command.usage(out);
                 return 0;
             }
+            if (std.mem.eql(u8, tail[0], "delete")) {
+                try issue_delete_command.usage(out);
+                return 0;
+            }
         }
         try issue_view_command.usage(out);
         try out.writeByte('\n');
         try issue_create_command.usage(out);
+        try out.writeByte('\n');
+        try issue_delete_command.usage(out);
         return 0;
     }
 
@@ -271,13 +320,13 @@ fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
 
 fn printUsage(writer: anytype) !void {
     try writer.print(
-        \\linear [--json] [--config PATH] [--no-keepalive] [--retries N] [--timeout-ms MS] [--help] [--version] <command> [args]
+        \\linear [--json] [--config PATH] [--endpoint URL] [--no-keepalive] [--retries N] [--timeout-ms MS] [--help] [--version] <command> [args]
         \\Commands:
         \\  auth set|test|show   Manage or validate authentication
         \\  me                   Show current user
         \\  teams list           List teams
         \\  issues list          List issues
-        \\  issue view|create    View or create an issue
+        \\  issue view|create|delete  View, create, or delete an issue
         \\  gql                  Run an arbitrary GraphQL query against Linear
         \\
         \\Use 'linear help <command>' for command-specific help and examples.

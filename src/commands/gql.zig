@@ -13,6 +13,7 @@ pub const Context = struct {
     json_output: bool,
     retries: u8,
     timeout_ms: u32,
+    endpoint: ?[]const u8 = null,
 };
 
 const Options = struct {
@@ -79,6 +80,7 @@ pub fn run(ctx: Context) !u8 {
     defer client.deinit();
     client.max_retries = ctx.retries;
     client.timeout_ms = ctx.timeout_ms;
+    if (ctx.endpoint) |ep| client.endpoint = ep;
 
     var response = common.send("gql", &client, ctx.allocator, .{
         .query = query,
@@ -92,6 +94,7 @@ pub fn run(ctx: Context) !u8 {
     var stdout_buf: [0]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
     const pretty = !ctx.json_output;
+    const data_value = response.data();
     var fields_buf = std.ArrayListUnmanaged([]const u8){};
     defer fields_buf.deinit(ctx.allocator);
     const selected_fields = parseFields(opts.fields, &fields_buf, ctx.allocator) catch |err| {
@@ -104,27 +107,31 @@ pub fn run(ctx: Context) !u8 {
     };
 
     if (opts.data_only) {
-        if (response.data()) |data_value| {
-            if (selected_fields) |fields| {
-                printer.printJsonFields(data_value, &stdout_writer.interface, pretty, fields) catch |err| {
-                    const message = switch (err) {
-                        error.UnknownField => "requested field not found in response",
-                        error.InvalidRoot => "fields can only target objects",
-                        else => @errorName(err),
-                    };
-                    try stderr.print("gql: {s}\n", .{message});
-                    return 1;
-                };
-            } else {
-                try printer.printJson(data_value, &stdout_writer.interface, pretty);
-            }
-        } else {
+        const data_root = data_value orelse {
             try stderr.print("gql: response did not include a data field\n", .{});
             return 1;
+        };
+
+        if (selected_fields) |fields| {
+            printer.printJsonFields(data_root, &stdout_writer.interface, pretty, fields) catch |err| {
+                const message = switch (err) {
+                    error.UnknownField => "requested field not found in response",
+                    error.InvalidRoot => "fields can only target objects",
+                    else => @errorName(err),
+                };
+                try stderr.print("gql: {s}\n", .{message});
+                return 1;
+            };
+        } else {
+            try printer.printJson(data_root, &stdout_writer.interface, pretty);
         }
     } else {
         if (selected_fields) |fields| {
-            printer.printJsonFields(response.parsed.value, &stdout_writer.interface, pretty, fields) catch |err| {
+            const target = data_value orelse {
+                try stderr.print("gql: response did not include a data field\n", .{});
+                return 1;
+            };
+            printer.printJsonFields(target, &stdout_writer.interface, pretty, fields) catch |err| {
                 const message = switch (err) {
                     error.UnknownField => "requested field not found in response",
                     error.InvalidRoot => "fields can only target objects",

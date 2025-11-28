@@ -1,0 +1,14 @@
+{
+  "data": {
+    "issueCreate": {
+      "success": true,
+      "issue": {
+        "id": "issue-new-1",
+        "identifier": "LIN-200",
+        "title": "Example created issue",
+        "url": "https://linear.app/example/issue/200"
+      },
+      "lastSyncId": 42
+    }
+  }
+}

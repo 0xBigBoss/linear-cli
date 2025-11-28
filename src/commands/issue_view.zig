@@ -13,6 +13,7 @@ pub const Context = struct {
     json_output: bool,
     retries: u8,
     timeout_ms: u32,
+    endpoint: ?[]const u8 = null,
 };
 
 const Options = struct {
@@ -21,7 +22,11 @@ const Options = struct {
     quiet: bool = false,
     data_only: bool = false,
     human_time: bool = false,
+    fields: ?[]const u8 = null,
 };
+
+const Field = enum { identifier, title, state, assignee, priority, url, created_at, updated_at, description };
+const default_fields = [_]Field{ .identifier, .title, .state, .assignee, .priority, .url, .created_at, .updated_at, .description };
 
 pub fn run(ctx: Context) !u8 {
     var stderr_buf: [0]u8 = undefined;
@@ -46,6 +51,23 @@ pub fn run(ctx: Context) !u8 {
     };
 
     const api_key = common.requireApiKey(ctx.config, null, stderr, "issue view") catch {
+        return 1;
+    };
+
+    var owned_times = std.ArrayListUnmanaged([]u8){};
+    defer {
+        for (owned_times.items) |value| ctx.allocator.free(value);
+        owned_times.deinit(ctx.allocator);
+    }
+
+    var fields_buf = std.ArrayListUnmanaged(Field){};
+    defer fields_buf.deinit(ctx.allocator);
+    const selected_fields = parseFields(opts.fields, &fields_buf, ctx.allocator) catch |err| {
+        const message = switch (err) {
+            error.InvalidFieldList => "invalid --fields value",
+            else => @errorName(err),
+        };
+        try stderr.print("issue view: {s}\n", .{message});
         return 1;
     };
 
@@ -77,6 +99,7 @@ pub fn run(ctx: Context) !u8 {
     defer client.deinit();
     client.max_retries = ctx.retries;
     client.timeout_ms = ctx.timeout_ms;
+    if (ctx.endpoint) |ep| client.endpoint = ep;
 
     var response = common.send("issue view", &client, ctx.allocator, .{
         .query = query,
@@ -96,13 +119,6 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    if (ctx.json_output and !opts.quiet and !opts.data_only) {
-        var out_buf: [0]u8 = undefined;
-        var out_writer = std.fs.File.stdout().writer(&out_buf);
-        try printer.printJson(data_value, &out_writer.interface, true);
-        return 0;
-    }
-
     const node = common.getObjectField(data_value, "issue") orelse {
         try stderr.print("issue view: issue not found\n", .{});
         return 1;
@@ -121,36 +137,93 @@ pub fn run(ctx: Context) !u8 {
     const url = common.getStringField(node, "url") orelse "";
     const created_raw = common.getStringField(node, "createdAt") orelse "";
     const updated_raw = common.getStringField(node, "updatedAt") orelse "";
-    const created = if (opts.human_time)
-        printer.humanTime(ctx.allocator, created_raw, null) catch created_raw
-    else
-        created_raw;
-    const updated = if (opts.human_time)
-        printer.humanTime(ctx.allocator, updated_raw, null) catch updated_raw
-    else
-        updated_raw;
+    const created = if (opts.human_time) blk: {
+        const formatted = printer.humanTime(ctx.allocator, created_raw, null) catch null;
+        if (formatted) |value| {
+            try owned_times.append(ctx.allocator, value);
+            break :blk value;
+        }
+        break :blk created_raw;
+    } else created_raw;
+    const updated = if (opts.human_time) blk: {
+        const formatted = printer.humanTime(ctx.allocator, updated_raw, null) catch null;
+        if (formatted) |value| {
+            try owned_times.append(ctx.allocator, value);
+            break :blk value;
+        }
+        break :blk updated_raw;
+    } else updated_raw;
     const description = common.getStringField(node, "description");
 
-    const pairs = [_]printer.KeyValue{
-        .{ .key = "Identifier", .value = identifier },
-        .{ .key = "Title", .value = title },
-        .{ .key = "State", .value = state_value },
-        .{ .key = "Assignee", .value = assignee_value },
-        .{ .key = "Priority", .value = priority },
-        .{ .key = "URL", .value = url },
-        .{ .key = "Created", .value = created },
-        .{ .key = "Updated", .value = updated },
+    const values = struct {
+        identifier: []const u8,
+        title: []const u8,
+        state: []const u8,
+        assignee: []const u8,
+        priority: []const u8,
+        url: []const u8,
+        created: []const u8,
+        updated: []const u8,
+        description: ?[]const u8,
+    }{
+        .identifier = identifier,
+        .title = title,
+        .state = state_value,
+        .assignee = assignee_value,
+        .priority = priority,
+        .url = url,
+        .created = created,
+        .updated = updated,
+        .description = if (description) |desc| if (desc.len > 0) desc else null else null,
     };
-    const data_pairs = [_]printer.KeyValue{
-        .{ .key = "identifier", .value = identifier },
-        .{ .key = "title", .value = title },
-        .{ .key = "state", .value = state_value },
-        .{ .key = "assignee", .value = assignee_value },
-        .{ .key = "priority", .value = priority },
-        .{ .key = "url", .value = url },
-        .{ .key = "created_at", .value = created },
-        .{ .key = "updated_at", .value = updated },
-    };
+
+    var display_pairs = std.ArrayListUnmanaged(printer.KeyValue){};
+    defer display_pairs.deinit(ctx.allocator);
+    var data_pairs = std.ArrayListUnmanaged(printer.KeyValue){};
+    defer data_pairs.deinit(ctx.allocator);
+
+    for (selected_fields) |field| {
+        switch (field) {
+            .identifier => {
+                try appendPair(&display_pairs, ctx.allocator, "Identifier", values.identifier);
+                try appendPair(&data_pairs, ctx.allocator, "identifier", values.identifier);
+            },
+            .title => {
+                try appendPair(&display_pairs, ctx.allocator, "Title", values.title);
+                try appendPair(&data_pairs, ctx.allocator, "title", values.title);
+            },
+            .state => {
+                try appendPair(&display_pairs, ctx.allocator, "State", values.state);
+                try appendPair(&data_pairs, ctx.allocator, "state", values.state);
+            },
+            .assignee => {
+                try appendPair(&display_pairs, ctx.allocator, "Assignee", values.assignee);
+                try appendPair(&data_pairs, ctx.allocator, "assignee", values.assignee);
+            },
+            .priority => {
+                try appendPair(&display_pairs, ctx.allocator, "Priority", values.priority);
+                try appendPair(&data_pairs, ctx.allocator, "priority", values.priority);
+            },
+            .url => {
+                try appendPair(&display_pairs, ctx.allocator, "URL", values.url);
+                try appendPair(&data_pairs, ctx.allocator, "url", values.url);
+            },
+            .created_at => {
+                try appendPair(&display_pairs, ctx.allocator, "Created", values.created);
+                try appendPair(&data_pairs, ctx.allocator, "created_at", values.created);
+            },
+            .updated_at => {
+                try appendPair(&display_pairs, ctx.allocator, "Updated", values.updated);
+                try appendPair(&data_pairs, ctx.allocator, "updated_at", values.updated);
+            },
+            .description => {
+                if (values.description) |desc_value| {
+                    try appendPair(&display_pairs, ctx.allocator, "Description", desc_value);
+                    try appendPair(&data_pairs, ctx.allocator, "description", desc_value);
+                }
+            },
+        }
+    }
 
     var stdout_buf: [0]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
@@ -165,39 +238,33 @@ pub fn run(ctx: Context) !u8 {
     if (opts.data_only) {
         if (ctx.json_output) {
             var data_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
-            for (data_pairs) |pair| {
+            for (data_pairs.items) |pair| {
                 try data_obj.object.put(pair.key, .{ .string = pair.value });
-            }
-            if (description) |desc| {
-                if (desc.len > 0) {
-                    try data_obj.object.put("description", .{ .string = desc });
-                }
             }
             try printer.printJson(data_obj, stdout_iface, true);
             return 0;
         }
 
-        try printer.printKeyValuesPlain(stdout_iface, data_pairs[0..]);
-        if (description) |desc| {
-            if (desc.len > 0) {
-                const desc_pair = [_]printer.KeyValue{
-                    .{ .key = "description", .value = desc },
-                };
-                try printer.printKeyValuesPlain(stdout_iface, desc_pair[0..]);
+        try printer.printKeyValuesPlain(stdout_iface, data_pairs.items);
+        return 0;
+    }
+
+    if (ctx.json_output) {
+        if (opts.fields == null) {
+            var out_buf2: [0]u8 = undefined;
+            var out_writer = std.fs.File.stdout().writer(&out_buf2);
+            try printer.printJson(data_value, &out_writer.interface, true);
+        } else {
+            var data_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+            for (data_pairs.items) |pair| {
+                try data_obj.object.put(pair.key, .{ .string = pair.value });
             }
+            try printer.printJson(data_obj, stdout_iface, true);
         }
         return 0;
     }
 
-    try printer.printKeyValues(stdout_iface, pairs[0..]);
-    if (description) |desc| {
-        if (desc.len > 0) {
-            try stdout_iface.writeByte('\n');
-            try stdout_iface.writeAll("Description:\n");
-            try stdout_iface.writeAll(desc);
-            try stdout_iface.writeByte('\n');
-        }
-    }
+    try printer.printKeyValues(stdout_iface, display_pairs.items);
 
     return 0;
 }
@@ -222,6 +289,17 @@ fn parseOptions(args: [][]const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--fields")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.fields = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--fields=")) {
+            opts.fields = arg["--fields=".len..];
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--human-time")) {
             opts.human_time = true;
             idx += 1;
@@ -238,12 +316,54 @@ fn parseOptions(args: [][]const u8) !Options {
     return opts;
 }
 
+fn parseFields(raw: ?[]const u8, buffer: *std.ArrayListUnmanaged(Field), allocator: Allocator) ![]const Field {
+    if (raw) |value| {
+        var iter = std.mem.tokenizeScalar(u8, value, ',');
+        while (iter.next()) |field_raw| {
+            const trimmed = std.mem.trim(u8, field_raw, " \t");
+            if (trimmed.len == 0) continue;
+            const field = parseFieldName(trimmed) orelse return error.InvalidFieldList;
+            if (!containsField(buffer.items, field)) {
+                try buffer.append(allocator, field);
+            }
+        }
+        if (buffer.items.len == 0) return error.InvalidFieldList;
+        return buffer.items;
+    }
+    return default_fields[0..];
+}
+
+fn parseFieldName(name: []const u8) ?Field {
+    if (std.ascii.eqlIgnoreCase(name, "identifier") or std.ascii.eqlIgnoreCase(name, "id")) return .identifier;
+    if (std.ascii.eqlIgnoreCase(name, "title")) return .title;
+    if (std.ascii.eqlIgnoreCase(name, "state")) return .state;
+    if (std.ascii.eqlIgnoreCase(name, "assignee")) return .assignee;
+    if (std.ascii.eqlIgnoreCase(name, "priority")) return .priority;
+    if (std.ascii.eqlIgnoreCase(name, "url")) return .url;
+    if (std.ascii.eqlIgnoreCase(name, "created") or std.ascii.eqlIgnoreCase(name, "created_at")) return .created_at;
+    if (std.ascii.eqlIgnoreCase(name, "updated") or std.ascii.eqlIgnoreCase(name, "updated_at")) return .updated_at;
+    if (std.ascii.eqlIgnoreCase(name, "description")) return .description;
+    return null;
+}
+
+fn containsField(haystack: []const Field, needle: Field) bool {
+    for (haystack) |entry| {
+        if (entry == needle) return true;
+    }
+    return false;
+}
+
+fn appendPair(list: *std.ArrayListUnmanaged(printer.KeyValue), allocator: Allocator, key: []const u8, value: []const u8) !void {
+    try list.append(allocator, .{ .key = key, .value = value });
+}
+
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue view <ID|IDENTIFIER> [--quiet] [--data-only] [--human-time] [--help]
+        \\Usage: linear issue view <ID|IDENTIFIER> [--quiet] [--data-only] [--fields LIST] [--human-time] [--help]
         \\Flags:
         \\  --quiet        Print only the identifier
         \\  --data-only    Emit tab-separated fields without formatting (or JSON object with --json)
+        \\  --fields LIST  Comma-separated fields (identifier,title,state,assignee,priority,url,created_at,updated_at,description)
         \\  --human-time   Render timestamps as relative values
         \\  --help         Show this help message
         \\Examples:

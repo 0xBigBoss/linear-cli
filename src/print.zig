@@ -6,9 +6,9 @@ pub const TableOptions = struct {
     truncate: bool = true,
 };
 
-pub const IssueField = enum { identifier, title, state, assignee, priority, updated };
+pub const IssueField = enum { identifier, title, state, assignee, priority, updated, parent, sub_issues };
 pub const issue_default_fields = [_]IssueField{ .identifier, .title, .state, .assignee, .priority, .updated };
-pub const issue_field_count = issue_default_fields.len;
+pub const issue_field_count = std.meta.fields(IssueField).len;
 
 pub const TeamField = enum { id, key, name };
 pub const team_default_fields = [_]TeamField{ .id, .key, .name };
@@ -46,6 +46,8 @@ pub const IssueRow = struct {
     state: []const u8,
     assignee: []const u8,
     priority: []const u8,
+    parent: []const u8,
+    sub_issues: []const u8,
     updated: []const u8,
 };
 
@@ -278,6 +280,8 @@ fn issueFieldLabel(field: IssueField) []const u8 {
         .state => "State",
         .assignee => "Assignee",
         .priority => "Priority",
+        .parent => "Parent",
+        .sub_issues => "Sub-issues",
         .updated => "Updated",
     };
 }
@@ -289,6 +293,8 @@ fn issueFieldCap(field: IssueField) usize {
         .state => 18,
         .assignee => 20,
         .priority => 10,
+        .parent => 20,
+        .sub_issues => 32,
         .updated => 25,
     };
 }
@@ -301,6 +307,8 @@ fn fillIssueCells(row: IssueRow, fields: []const IssueField, buffer: *[issue_fie
             .state => row.state,
             .assignee => row.assignee,
             .priority => row.priority,
+            .parent => row.parent,
+            .sub_issues => row.sub_issues,
             .updated => row.updated,
         };
     }
