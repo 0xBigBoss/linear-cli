@@ -1,0 +1,16 @@
+{
+  "name": "@0xbigboss/linear-cli",
+  "version": "0.1.0",
+  "description": "Linear CLI built with Zig",
+  "license": "MIT",
+  "repository": "https://github.com/0xbigboss/linear-cli",
+  "bin": {
+    "linear": "bin.js"
+  },
+  "optionalDependencies": {
+    "@0xbigboss/linear-cli-darwin-arm64": "0.1.0",
+    "@0xbigboss/linear-cli-darwin-x64": "0.1.0",
+    "@0xbigboss/linear-cli-linux-x64": "0.1.0",
+    "@0xbigboss/linear-cli-linux-arm64": "0.1.0"
+  }
+}

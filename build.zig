@@ -271,6 +271,73 @@ pub fn build(b: *std.Build) void {
     const online_step = b.step("online", "Run online tests (requires LINEAR_ONLINE_TESTS=1 and LINEAR_API_KEY)");
     const run_online = b.addRunArtifact(online_tests);
     online_step.dependOn(&run_online.step);
+
+    // npm distribution: cross-compile for all platforms
+    // Note: Windows build requires platform-specific fixes for tcsetattr and file permissions
+    const npm_targets = [_]struct { name: []const u8, cpu: std.Target.Cpu.Arch, os: std.Target.Os.Tag }{
+        .{ .name = "darwin-arm64", .cpu = .aarch64, .os = .macos },
+        .{ .name = "darwin-x64", .cpu = .x86_64, .os = .macos },
+        .{ .name = "linux-x64", .cpu = .x86_64, .os = .linux },
+        .{ .name = "linux-arm64", .cpu = .aarch64, .os = .linux },
+        // .{ .name = "win32-x64", .cpu = .x86_64, .os = .windows }, // TODO: fix tcsetattr and file permissions
+    };
+
+    const npm_step = b.step("npm", "Build for all npm platforms");
+
+    for (npm_targets) |t| {
+        const npm_target = b.resolveTargetQuery(.{ .cpu_arch = t.cpu, .os_tag = t.os });
+        const npm_optimize = std.builtin.OptimizeMode.ReleaseSafe;
+
+        const npm_cli_mod = b.createModule(.{
+            .root_source_file = b.path("src/cli.zig"),
+            .target = npm_target,
+            .optimize = npm_optimize,
+        });
+
+        const npm_config_mod = b.createModule(.{
+            .root_source_file = b.path("src/config.zig"),
+            .target = npm_target,
+            .optimize = npm_optimize,
+        });
+        const npm_graphql_mod = b.createModule(.{
+            .root_source_file = b.path("src/graphql_client.zig"),
+            .target = npm_target,
+            .optimize = npm_optimize,
+        });
+        const npm_printer_mod = b.createModule(.{
+            .root_source_file = b.path("src/print.zig"),
+            .target = npm_target,
+            .optimize = npm_optimize,
+        });
+        const npm_common_mod = b.createModule(.{
+            .root_source_file = b.path("src/commands/common.zig"),
+            .target = npm_target,
+            .optimize = npm_optimize,
+        });
+        npm_common_mod.addImport("config", npm_config_mod);
+        npm_common_mod.addImport("graphql", npm_graphql_mod);
+
+        const npm_exe = b.addExecutable(.{
+            .name = "linear",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/main.zig"),
+                .target = npm_target,
+                .optimize = npm_optimize,
+            }),
+        });
+        npm_exe.root_module.addOptions("build_options", build_options);
+        npm_exe.root_module.addImport("cli", npm_cli_mod);
+        npm_exe.root_module.addImport("config", npm_config_mod);
+        npm_exe.root_module.addImport("graphql", npm_graphql_mod);
+        npm_exe.root_module.addImport("printer", npm_printer_mod);
+        npm_exe.root_module.addImport("common", npm_common_mod);
+
+        const dest_dir = b.fmt("npm/linear-cli-{s}", .{t.name});
+        const install = b.addInstallArtifact(npm_exe, .{
+            .dest_dir = .{ .override = .{ .custom = dest_dir } },
+        });
+        npm_step.dependOn(&install.step);
+    }
 }
 
 fn detectGitHash(allocator: std.mem.Allocator) []const u8 {

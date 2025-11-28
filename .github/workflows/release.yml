@@ -1,0 +1,37 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - run: zig build npm
+      - name: Copy binaries to npm packages
+        run: |
+          for p in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            cp zig-out/npm/linear-cli-${p}/linear npm/linear-cli-${p}/
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: npm/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: npm
+      - env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: ./scripts/publish-npm.sh ${GITHUB_REF_NAME#v}
