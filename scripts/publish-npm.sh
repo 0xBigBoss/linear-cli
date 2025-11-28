@@ -3,6 +3,11 @@ set -euo pipefail
 
 VERSION="${1:?Usage: publish-npm.sh <version>}"
 
+# Configure npm auth if NPM_TOKEN is set
+if [[ -n "${NPM_TOKEN:-}" ]]; then
+  echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+fi
+
 # Update versions
 for f in npm/*/package.json; do
   jq --arg v "$VERSION" '.version = $v' "$f" > tmp && mv tmp "$f"
