@@ -1,0 +1,16 @@
+{
+  "name": "linear-cli-marketplace",
+  "owner": {
+    "name": "0xbigboss"
+  },
+  "plugins": [
+    {
+      "name": "linear-cli",
+      "description": "Linear CLI integration for managing issues, teams, and projects",
+      "source": "./",
+      "skills": [
+        "./skills/linear"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "linear-cli",
+  "version": "0.1.0",
+  "description": "Linear CLI integration for Claude Code - manage issues, teams, and projects",
+  "author": {
+    "name": "0xbigboss"
+  },
+  "repository": "https://github.com/0xbigboss/linear-cli"
+}
