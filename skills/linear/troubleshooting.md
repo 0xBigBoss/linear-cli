@@ -78,8 +78,8 @@ linear teams list
 # Specify team explicitly
 linear issues list --team TEAM_KEY
 
-# Include completed/canceled issues
-linear issues list --team TEAM_KEY --state all
+# Include all issues (including completed/canceled)
+linear issues list --team TEAM_KEY --state-type backlog,unstarted,started,completed,canceled
 ```
 
 ### Issue Not Found
