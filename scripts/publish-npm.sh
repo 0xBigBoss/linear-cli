@@ -3,7 +3,7 @@ set -euo pipefail
 
 VERSION="${1:?Usage: publish-npm.sh <version>}"
 
-# bun publish reads NPM_CONFIG_TOKEN env var directly
+# Auth configured via bunfig.toml (reads $NPM_CONFIG_TOKEN)
 
 # Update versions
 for f in npm/*/package.json; do
