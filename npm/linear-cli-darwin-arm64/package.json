@@ -1,6 +1,13 @@
 {
   "name": "@0xbigboss/linear-cli-darwin-arm64",
   "version": "0.1.0",
-  "os": ["darwin"],
-  "cpu": ["arm64"]
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "scripts": {
+    "prepublishOnly": "test -f linear || (echo 'Error: binary not found. Run build first.' && exit 1)"
+  }
 }
