@@ -60,3 +60,13 @@ Commands:
 - Default output: table.
 - Default state exclusion: `completed`, `canceled`.
 - Pagination: 25 items per page; `--cursor`, `--pages`, and `--all` drive additional page fetches, and stderr reports fetched counts with `hasNextPage` status.
+
+## Claude Code Integration
+
+Install as a Claude Code plugin to let Claude manage Linear issues for you:
+
+```
+/plugin install linear-cli@https://github.com/0xbigboss/linear-cli
+```
+
+The plugin provides a skill that teaches Claude how to use the Linear CLI commands. Requires the `linear` binary to be installed first (see Build & Test above, or `npm install -g @0xbigboss/linear-cli`).
