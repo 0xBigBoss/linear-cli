@@ -6,7 +6,9 @@ pub fn build(b: *std.Build) void {
 
     const build_options = b.addOptions();
     const git_hash = detectGitHash(b.allocator);
+    const git_version = detectGitVersion(b.allocator);
     build_options.addOption([]const u8, "git_hash", git_hash);
+    build_options.addOption([]const u8, "version", git_version);
 
     const cli_mod = b.createModule(.{
         .root_source_file = b.path("src/cli.zig"),
@@ -358,4 +360,30 @@ fn detectGitHash(allocator: std.mem.Allocator) []const u8 {
     if (trimmed.len == 0) return "unknown";
 
     return allocator.dupe(u8, trimmed) catch "unknown";
+}
+
+fn detectGitVersion(allocator: std.mem.Allocator) []const u8 {
+    // Try to get version from git tags: "v0.1.1" or "v0.1.1-3-g1234567" if ahead of tag
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &.{ "git", "describe", "--tags", "--always" },
+    }) catch return "0.0.0-dev";
+    defer allocator.free(result.stderr);
+    defer allocator.free(result.stdout);
+
+    const success = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!success) return "0.0.0-dev";
+
+    var trimmed = std.mem.trim(u8, result.stdout, " \r\n\t");
+    if (trimmed.len == 0) return "0.0.0-dev";
+
+    // Strip leading 'v' if present (v0.1.1 -> 0.1.1)
+    if (trimmed.len > 0 and trimmed[0] == 'v') {
+        trimmed = trimmed[1..];
+    }
+
+    return allocator.dupe(u8, trimmed) catch "0.0.0-dev";
 }

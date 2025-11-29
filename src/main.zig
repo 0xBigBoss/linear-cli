@@ -13,7 +13,7 @@ const issue_view_command = @import("commands/issue_view.zig");
 const issue_create_command = @import("commands/issue_create.zig");
 const issue_delete_command = @import("commands/issue_delete.zig");
 
-const version_string = "0.0.1-dev";
+const version_string = build_options.version;
 const GlobalOptions = cli.GlobalOptions;
 const Parsed = cli.Parsed;
 const parseGlobal = cli.parseGlobal;
@@ -67,6 +67,19 @@ fn run() !u8 {
     };
     defer allocator.free(cleaned_rest);
 
+    // Check help/version flags before requiring a subcommand
+    if (opts.version) {
+        try printVersion();
+        return 0;
+    }
+
+    if (opts.help) {
+        var out_buf: [0]u8 = undefined;
+        var usage_writer = std.fs.File.stdout().writer(&out_buf);
+        try printUsage(&usage_writer.interface);
+        return 0;
+    }
+
     if (cleaned_rest.len == 0) {
         var out_buf: [0]u8 = undefined;
         var usage_writer = std.fs.File.stderr().writer(&out_buf);
@@ -87,20 +100,8 @@ fn run() !u8 {
 
     graphql.setDefaultKeepAlive(opts.keep_alive);
 
-    if (opts.version) {
-        try printVersion();
-        return 0;
-    }
-
     if (std.mem.eql(u8, subcommand, "help")) {
         return routeHelp(sub_args, stderr);
-    }
-
-    if (opts.help) {
-        var out_buf: [0]u8 = undefined;
-        var usage_writer = std.fs.File.stdout().writer(&out_buf);
-        try printUsage(&usage_writer.interface);
-        return 0;
     }
 
     var cfg = config.load(allocator, opts.config_path) catch |err| {
