@@ -63,10 +63,40 @@ Commands:
 
 ## Claude Code Integration
 
-Install as a Claude Code plugin to let Claude manage Linear issues for you:
+Install as a Claude Code plugin to let Claude manage Linear issues for you.
 
-```
-/plugin install linear-cli@https://github.com/0xbigboss/linear-cli
+### Prerequisites
+
+Install the `linear` binary first:
+```bash
+npm install -g @0xbigboss/linear-cli
+linear auth set  # configure your API key
 ```
 
-The plugin provides a skill that teaches Claude how to use the Linear CLI commands. Requires the `linear` binary to be installed first (see Build & Test above, or `npm install -g @0xbigboss/linear-cli`).
+### Install the Plugin
+
+**1. Add the marketplace:**
+```
+/plugin marketplace add https://github.com/0xbigboss/linear-cli
+```
+
+**2. Install the plugin:**
+```
+/plugin install linear-cli@linear-cli-marketplace
+```
+
+**3. Restart Claude Code** to load the plugin.
+
+### What It Does
+
+The plugin provides a skill that teaches Claude how to use the Linear CLI. Once installed, Claude will automatically use the CLI when you ask about:
+- Listing, viewing, or creating issues
+- Managing teams and projects
+- Linking issues, adding attachments, or comments
+- Any Linear-related task
+
+Example prompts:
+- "List my Linear issues"
+- "Create an issue in the ENG team titled 'Fix login bug'"
+- "Show me issue ENG-123"
+- "Link ENG-123 as blocking ENG-456"
