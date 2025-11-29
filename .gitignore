@@ -4,3 +4,6 @@ zig-out/
 
 .env.local
 .envrc.private
+
+# Built binaries in npm packages (created during CI/release)
+npm/*/linear
