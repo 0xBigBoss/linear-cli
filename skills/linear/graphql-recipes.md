@@ -103,13 +103,18 @@ Three-step process: request signed URL, upload file, use asset URL.
 
 ### Step 1: Get upload URL
 
+The `fileUpload` mutation returns an `UploadPayload` with a nested `uploadFile` object:
+
 ```bash
 cat > /tmp/file-upload.graphql << 'EOF'
 mutation RequestUpload($filename: String!, $contentType: String!, $size: Int!) {
   fileUpload(filename: $filename, contentType: $contentType, size: $size) {
-    uploadUrl
-    assetUrl
-    headers { key value }
+    success
+    uploadFile {
+      uploadUrl
+      assetUrl
+      headers { key value }
+    }
   }
 }
 EOF
@@ -121,16 +126,20 @@ linear gql --query /tmp/file-upload.graphql \
 
 ### Step 2: Upload to signed URL
 
+**Important:** Include ALL headers from the response to avoid 403 Forbidden errors.
+
 ```bash
-# Extract uploadUrl from response, then:
+# Extract uploadUrl and headers from response.uploadFile, then:
+# Headers typically include x-amz-* fields required by S3
 curl -X PUT "UPLOAD_URL_FROM_RESPONSE" \
   -H "Content-Type: image/png" \
+  -H "x-amz-acl: VALUE_FROM_HEADERS" \
   --data-binary @screenshot.png
 ```
 
 ### Step 3: Use asset URL
 
-The `assetUrl` from step 1 can be embedded in markdown:
+The `assetUrl` from `uploadFile` can be embedded in markdown:
 ```markdown
 ![screenshot](ASSET_URL)
 ```
