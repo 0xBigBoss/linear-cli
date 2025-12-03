@@ -67,6 +67,8 @@ Verify each command in the table works:
 - [ ] `linear issues list`
 - [ ] `linear issue view ID`
 - [ ] `linear issue create` (with required flags)
+- [ ] `linear issue update ID` (with at least one field)
+- [ ] `linear issue link ID` (with relation flag)
 - [ ] `linear issue delete ID` (dry-run first)
 - [ ] `linear teams list`
 - [ ] `linear me`
@@ -86,21 +88,46 @@ Verify each error scenario:
 - [ ] Missing --yes → mutation exits without action
 - [ ] Invalid issue ID → appropriate error message
 
-### Phase 5: GraphQL Recipes (graphql-recipes.md)
+### Phase 5: Issue Update Command
+Test issue update functionality:
+- [ ] `linear issue update ID --assignee me --yes` - assigns to current user
+- [ ] `linear issue update ID --priority 1 --yes` - sets priority
+- [ ] `linear issue update ID --state STATE_ID --yes` - changes state
+- [ ] `linear issue update ID --title "New Title" --yes` - updates title
+- [ ] `linear issue update ID --parent PARENT_ID --yes` - sets parent (sub-issue)
+- [ ] `linear issue update ID --yes` (no fields) → error "at least one field"
+- [ ] `linear issue update ID --priority 1` (no --yes) → error "confirmation required"
+
+### Phase 6: Issue Link Command
+Test issue linking functionality:
+- [ ] `linear issue link ID --blocks OTHER_ID --yes` - creates blocks relation
+- [ ] `linear issue link ID --related OTHER_ID --yes` - creates related relation
+- [ ] `linear issue link ID --duplicate OTHER_ID --yes` - marks as duplicate
+- [ ] `linear issue link ID --yes` (no relation) → error "exactly one of --blocks"
+- [ ] `linear issue link ID --blocks A --related B --yes` → error "only one of --blocks"
+
+### Phase 7: Hygiene Section
+Verify hygiene examples from SKILL.md work:
+- [ ] Assignment workflow: `linear issue update ENG-123 --assignee me --yes`
+- [ ] Sub-issue workflow: `linear issue update ENG-123 --parent ENG-100 --yes`
+- [ ] Blocking workflow: `linear issue link ENG-123 --blocks ENG-456 --yes`
+
+### Phase 8: GraphQL Recipes (graphql-recipes.md)
 Test at least these recipes:
 - [ ] Viewer query: `echo 'query { viewer { id name } }' | linear gql --json`
 - [ ] Teams query: `echo 'query { teams { nodes { id key } } }' | linear gql --json`
-- [ ] Link issues (issueRelationCreate) - if I have two test issues
 - [ ] Add comment (commentCreate) - on a test issue
 - [ ] Attach URL (attachmentCreate) - on a test issue
 
-### Phase 6: Troubleshooting Scenarios
+Note: Link issues and set parent are now covered by direct CLI commands in Phases 5-6.
+
+### Phase 9: Troubleshooting Scenarios
 Verify error handling matches documentation:
 - [ ] 401 error format (if safe to test)
 - [ ] "Issue not found" error message
 - [ ] Missing required fields error
 
-### Phase 7: External Links
+### Phase 10: External Links
 Verify links are valid:
 - [ ] Linear API Docs link
 - [ ] Apollo Studio link

@@ -85,7 +85,8 @@ Progress:
 - [ ] List teams to get TEAM_KEY: `linear teams list`
 - [ ] Create parent issue: `linear issue create --team KEY --title "Epic" --yes`
 - [ ] Create child issue: `linear issue create --team KEY --title "Task" --yes`
-- [ ] Link issues (see graphql-recipes.md for issueRelationCreate)
+- [ ] Set parent: `linear issue update CHILD_ID --parent PARENT_ID --yes`
+- [ ] Link blocking issue: `linear issue link ISSUE_ID --blocks OTHER_ID --yes`
 - [ ] Verify: `linear issue view ISSUE_ID --json`
 ```
 
@@ -102,11 +103,11 @@ Progress:
 
 For operations not covered by built-in commands, use `linear gql` with GraphQL:
 
-- **Link issues** - See `graphql-recipes.md` → "Link Two Issues"
 - **Add attachments** - See `graphql-recipes.md` → "Attach URL to Issue"
 - **Upload files** - See `graphql-recipes.md` → "Upload File"
 - **Add comments** - See `graphql-recipes.md` → "Add Comment"
-- **Set parent/child** - See `graphql-recipes.md` → "Set Issue Parent"
+
+Note: Linking issues and setting parent are now available via `issue link` and `issue update --parent`.
 
 ## Finding IDs
 
