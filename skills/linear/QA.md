@@ -37,9 +37,13 @@ This loads the documentation you will be testing. Do NOT read skill files direct
 
 After the skill documentation has loaded, run these checks and confirm with me:
 
-1. Run `linear auth test` - is a test API key configured?
-2. Run `linear teams list` - which team should I use for testing?
-3. Do I have permission to create/delete test issues in this workspace?
+1. Run `linear --version` and compare against `git describe --tags --always --dirty`:
+   - Version should match the current commit (e.g., `v0.1.0` or `v0.1.0-5-gabc1234`)
+   - If the repo is dirty (`-dirty` suffix), confirm with me whether this is acceptable
+   - If versions don't match, the binary may be stale - rebuild with `zig build`
+2. Run `linear auth test` - is a test API key configured?
+3. Run `linear teams list` - which team should I use for testing?
+4. Do I have permission to create/delete test issues in this workspace?
 
 Stop and wait for my answers before proceeding to Step 3.
 
