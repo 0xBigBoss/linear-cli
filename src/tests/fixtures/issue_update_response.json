@@ -1,0 +1,16 @@
+{
+  "data": {
+    "issueUpdate": {
+      "success": true,
+      "issue": {
+        "id": "issue-upd-1",
+        "identifier": "LIN-123",
+        "title": "Updated issue",
+        "url": "https://linear.app/example/issue/123",
+        "state": { "name": "In Progress" },
+        "assignee": { "name": "Offline User" },
+        "parent": { "identifier": "LIN-100" }
+      }
+    }
+  }
+}

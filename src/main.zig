@@ -12,6 +12,8 @@ const issues_command = @import("commands/issues.zig");
 const issue_view_command = @import("commands/issue_view.zig");
 const issue_create_command = @import("commands/issue_create.zig");
 const issue_delete_command = @import("commands/issue_delete.zig");
+const issue_update_command = @import("commands/issue_update.zig");
+const issue_link_command = @import("commands/issue_link.zig");
 
 const version_string = build_options.version;
 const GlobalOptions = cli.GlobalOptions;
@@ -189,7 +191,7 @@ fn run() !u8 {
 
     if (std.mem.eql(u8, subcommand, "issue")) {
         if (sub_args.len == 0) {
-            try stderr.print("issue: expected 'view' or 'create'\n", .{});
+            try stderr.print("issue: expected 'view', 'create', 'update', 'delete', or 'link'\n", .{});
             try printUsage(stderr);
             return 1;
         }
@@ -219,6 +221,28 @@ fn run() !u8 {
         }
         if (std.mem.eql(u8, issue_sub, "delete")) {
             return issue_delete_command.run(.{
+                .allocator = allocator,
+                .config = &cfg,
+                .args = issue_args,
+                .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
+            });
+        }
+        if (std.mem.eql(u8, issue_sub, "update")) {
+            return issue_update_command.run(.{
+                .allocator = allocator,
+                .config = &cfg,
+                .args = issue_args,
+                .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
+            });
+        }
+        if (std.mem.eql(u8, issue_sub, "link")) {
+            return issue_link_command.run(.{
                 .allocator = allocator,
                 .config = &cfg,
                 .args = issue_args,
@@ -300,12 +324,24 @@ fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
                 try issue_delete_command.usage(out);
                 return 0;
             }
+            if (std.mem.eql(u8, tail[0], "update")) {
+                try issue_update_command.usage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "link")) {
+                try issue_link_command.usage(out);
+                return 0;
+            }
         }
         try issue_view_command.usage(out);
         try out.writeByte('\n');
         try issue_create_command.usage(out);
         try out.writeByte('\n');
+        try issue_update_command.usage(out);
+        try out.writeByte('\n');
         try issue_delete_command.usage(out);
+        try out.writeByte('\n');
+        try issue_link_command.usage(out);
         return 0;
     }
 
@@ -327,7 +363,7 @@ fn printUsage(writer: anytype) !void {
         \\  me                   Show current user
         \\  teams list           List teams
         \\  issues list          List issues
-        \\  issue view|create|delete  View, create, or delete an issue
+        \\  issue view|create|update|delete|link  Manage issues
         \\  gql                  Run an arbitrary GraphQL query against Linear
         \\
         \\Use 'linear help <command>' for command-specific help and examples.

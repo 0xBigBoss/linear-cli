@@ -14,6 +14,8 @@ const issues_cmd = @import("issues_test");
 const issue_create_cmd = @import("issue_create_test");
 const issue_view_cmd = @import("issue_view_test");
 const issue_delete_cmd = @import("issue_delete_test");
+const issue_update_cmd = @import("issue_update_test");
+const issue_link_cmd = @import("issue_link_test");
 const me_cmd = @import("me_test");
 const teams_cmd = @import("teams_test");
 const printer = @import("printer");
@@ -37,6 +39,8 @@ const fixtures = struct {
     pub const issue_view_response = @embedFile("fixtures/issue_view.json");
     pub const issue_view_project = @embedFile("fixtures/issue_view_project.json");
     pub const issue_view_relations = @embedFile("fixtures/issue_view_relations.json");
+    pub const issue_update_response = @embedFile("fixtures/issue_update_response.json");
+    pub const issue_link_response = @embedFile("fixtures/issue_link_response.json");
 };
 
 test "config save and load roundtrip" {
@@ -341,6 +345,52 @@ test "parse issue create options" {
     try std.testing.expect(opts.labels != null);
     try std.testing.expect(opts.quiet);
     try std.testing.expect(opts.data_only);
+}
+
+test "parse issue update options" {
+    const args = [_][]const u8{ "ENG-123", "--assignee", "me", "--parent", "ENG-100", "--state", "state-1", "--priority", "2", "--title", "Updated", "--yes", "--quiet" };
+    const opts = try issue_update_cmd.parseOptions(args[0..]);
+    try std.testing.expectEqualStrings("ENG-123", opts.identifier.?);
+    try std.testing.expectEqualStrings("me", opts.assignee.?);
+    try std.testing.expectEqualStrings("ENG-100", opts.parent.?);
+    try std.testing.expectEqualStrings("state-1", opts.state.?);
+    try std.testing.expectEqual(@as(i64, 2), opts.priority.?);
+    try std.testing.expectEqualStrings("Updated", opts.title.?);
+    try std.testing.expect(opts.yes);
+    try std.testing.expect(opts.quiet);
+}
+
+test "parse issue update rejects unknown flag" {
+    const args = [_][]const u8{ "ENG-123", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, issue_update_cmd.parseOptions(args[0..]));
+}
+
+test "parse issue link options blocks" {
+    const args = [_][]const u8{ "ENG-123", "--blocks", "ENG-456", "--yes" };
+    const opts = try issue_link_cmd.parseOptions(args[0..]);
+    try std.testing.expectEqualStrings("ENG-123", opts.identifier.?);
+    try std.testing.expectEqualStrings("ENG-456", opts.blocks.?);
+    try std.testing.expect(opts.related == null);
+    try std.testing.expect(opts.duplicate == null);
+    try std.testing.expect(opts.yes);
+}
+
+test "parse issue link options related" {
+    const args = [_][]const u8{ "ENG-123", "--related", "ENG-789", "--yes" };
+    const opts = try issue_link_cmd.parseOptions(args[0..]);
+    try std.testing.expectEqualStrings("ENG-789", opts.related.?);
+    try std.testing.expect(opts.blocks == null);
+}
+
+test "parse issue link options duplicate" {
+    const args = [_][]const u8{ "ENG-123", "--duplicate", "ENG-100", "--yes" };
+    const opts = try issue_link_cmd.parseOptions(args[0..]);
+    try std.testing.expectEqualStrings("ENG-100", opts.duplicate.?);
+}
+
+test "parse issue link rejects unknown flag" {
+    const args = [_][]const u8{ "ENG-123", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, issue_link_cmd.parseOptions(args[0..]));
 }
 
 test "global flags parsed after subcommand" {
@@ -1773,6 +1823,460 @@ test "issue delete reports failure" {
 
     try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "delete failed") != null);
+}
+
+test "issue update succeeds with quiet output" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueUpdate", fixtures.issue_update_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--priority", "1", "--yes", "--quiet" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings("LIN-123\n", capture.stdout);
+    try std.testing.expectEqualStrings("", capture.stderr);
+}
+
+test "issue update requires confirmation" {
+    const allocator = std.testing.allocator;
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--priority", "1" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "confirmation required") != null);
+}
+
+test "issue update requires at least one field" {
+    const allocator = std.testing.allocator;
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--yes" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "at least one field") != null);
+}
+
+test "issue update with assignee me resolves viewer" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    // The viewer query runs first to resolve "me", then the update mutation
+    try server.set("Viewer", fixtures.viewer_response);
+    try server.set("IssueUpdate", fixtures.issue_update_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--assignee", "me", "--yes", "--quiet" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings("LIN-123\n", capture.stdout);
+}
+
+test "issue update reports user error" {
+    const allocator = std.testing.allocator;
+    const user_error =
+        \\{
+        \\  "data": {
+        \\    "issueUpdate": {
+        \\      "success": false,
+        \\      "issue": null,
+        \\      "userError": "permission denied"
+        \\    }
+        \\  }
+        \\}
+    ;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueUpdate", user_error);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--priority", "1", "--yes" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "permission denied") != null);
+}
+
+test "issue update data-only json output" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueUpdate", fixtures.issue_update_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--priority", "1", "--yes", "--data-only" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = true,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "\"identifier\": \"LIN-123\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "\"state\": \"In Progress\"") != null);
+}
+
+test "issue link succeeds with quiet output" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueRelationCreate", fixtures.issue_link_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runLink = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--blocks", "LIN-456", "--yes", "--quiet" };
+            return issue_link_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runLink);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings("relation-1\n", capture.stdout);
+    try std.testing.expectEqualStrings("", capture.stderr);
+}
+
+test "issue link requires confirmation" {
+    const allocator = std.testing.allocator;
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runLink = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--blocks", "LIN-456" };
+            return issue_link_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runLink);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "confirmation required") != null);
+}
+
+test "issue link requires exactly one relation type" {
+    const allocator = std.testing.allocator;
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runLink = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--yes" };
+            return issue_link_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runLink);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "exactly one of --blocks") != null);
+}
+
+test "issue link rejects multiple relation types" {
+    const allocator = std.testing.allocator;
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runLink = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--blocks", "LIN-456", "--related", "LIN-789", "--yes" };
+            return issue_link_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runLink);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "only one of --blocks") != null);
+}
+
+test "issue link data-only json output" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueRelationCreate", fixtures.issue_link_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runLink = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--blocks", "LIN-456", "--yes", "--data-only" };
+            return issue_link_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = true,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runLink);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "\"id\": \"relation-1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "\"type\": \"blocks\"") != null);
+}
+
+test "issue link reports user error" {
+    const allocator = std.testing.allocator;
+    const user_error =
+        \\{
+        \\  "data": {
+        \\    "issueRelationCreate": {
+        \\      "success": false,
+        \\      "issueRelation": null,
+        \\      "userError": "relation already exists"
+        \\    }
+        \\  }
+        \\}
+    ;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueRelationCreate", user_error);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runLink = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--blocks", "LIN-456", "--yes" };
+            return issue_link_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runLink);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "relation already exists") != null);
 }
 
 test "issue view filters fields" {

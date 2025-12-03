@@ -12,6 +12,15 @@ Interacts with Linear for issue tracking and project management using the `linea
 - Binary: `npm install -g @0xbigboss/linear-cli`
 - Auth: `linear auth set` or set `LINEAR_API_KEY` env var
 
+## Hygiene
+
+- **Branches**: Name as `{TICKET}-{short-name}` (e.g., `ENG-123-fix-auth`); prefer git worktrees for parallel work
+- **Commits**: Use conventional commits; ticket ID in body or trailer, not subject
+- **Assignment**: Assign yourself when starting work (`linear issue update ENG-123 --assignee me --yes`)
+- **Sub-issues**: Set parent to associate related work (`linear issue update ENG-123 --parent ENG-100 --yes`)
+- **Scope creep**: Create separate issues for discovered work; link with blocks relation (`linear issue link ENG-123 --blocks ENG-456 --yes`)
+- **Cycles/projects**: Ask user preference when creating issues
+
 ## Quick Recipes
 
 ### List my issues
@@ -52,6 +61,8 @@ linear auth test
 | `linear issues list` | List issues with filters |
 | `linear issue view ID` | View single issue |
 | `linear issue create` | Create new issue |
+| `linear issue update ID` | Update issue (assign, parent, state, priority) |
+| `linear issue link ID` | Link issues (blocks, related, duplicate) |
 | `linear issue delete ID` | Archive an issue |
 | `linear teams list` | List available teams |
 | `linear me` | Show current user |

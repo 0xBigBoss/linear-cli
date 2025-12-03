@@ -1,0 +1,13 @@
+{
+  "data": {
+    "issueRelationCreate": {
+      "success": true,
+      "issueRelation": {
+        "id": "relation-1",
+        "type": "blocks",
+        "issue": { "identifier": "LIN-123" },
+        "relatedIssue": { "identifier": "LIN-456" }
+      }
+    }
+  }
+}
