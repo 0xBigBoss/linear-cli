@@ -121,6 +121,34 @@ Test at least these recipes:
 
 Note: Link issues and set parent are now covered by direct CLI commands in Phases 5-6.
 
+### Phase 8b: File Upload (Critical Path)
+This tests the three-step file upload process which agents often get wrong:
+
+1. Create a test file:
+   ```bash
+   echo "QA test content $(date)" > /tmp/linear-qa-test.txt
+   ```
+
+2. Follow the fileUpload recipe in graphql-recipes.md exactly:
+   - [ ] Step 1: Call `fileUpload` mutation to get signed upload URL
+   - [ ] Step 2: PUT the file to the signed URL with correct headers
+   - [ ] Step 3: Use the returned `assetUrl` in an attachment or comment
+
+3. Verify the upload:
+   - [ ] Create attachment with the assetUrl on a test issue
+   - [ ] View the issue in Linear web UI to confirm file is accessible
+   - [ ] Download the file and verify content matches
+
+4. Clean up:
+   ```bash
+   rm /tmp/linear-qa-test.txt
+   ```
+
+Common failure modes to verify against:
+- Using wrong Content-Type header in PUT request
+- Not waiting for signed URL before uploading
+- Using uploadUrl instead of assetUrl in attachments
+
 ### Phase 9: Troubleshooting Scenarios
 Verify error handling matches documentation:
 - [ ] 401 error format (if safe to test)
