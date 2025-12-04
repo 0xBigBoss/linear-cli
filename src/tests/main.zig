@@ -39,6 +39,7 @@ const fixtures = struct {
     pub const issue_view_response = @embedFile("fixtures/issue_view.json");
     pub const issue_view_project = @embedFile("fixtures/issue_view_project.json");
     pub const issue_view_relations = @embedFile("fixtures/issue_view_relations.json");
+    pub const issue_view_comments = @embedFile("fixtures/issue_view_comments.json");
     pub const issue_update_response = @embedFile("fixtures/issue_update_response.json");
     pub const issue_link_response = @embedFile("fixtures/issue_link_response.json");
 };
@@ -2570,6 +2571,56 @@ test "issue view includes parent and sub-issues with limit" {
     try std.testing.expect(std.mem.indexOf(u8, subs_field.string, "LIN-601") != null);
     try std.testing.expect(subs_field.string.len > 0);
     try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "sub-issues limited") != null);
+}
+
+test "issue view includes comments with limit" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueView", fixtures.issue_view_comments);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runView = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-700", "--fields", "identifier,comments", "--data-only", "--comment-limit", "1" };
+            return issue_view_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = true,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runView);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, capture.stdout, .{});
+    defer parsed.deinit();
+    const root = parsed.value;
+    if (root != .object) return error.TestExpectedResult;
+    const comments_field = root.object.get("comments") orelse return error.TestExpectedResult;
+    if (comments_field != .array) return error.TestExpectedResult;
+    try std.testing.expect(comments_field.array.items.len > 0);
+    const first_comment = comments_field.array.items[0];
+    if (first_comment != .object) return error.TestExpectedResult;
+    const body_field = first_comment.object.get("body") orelse return error.TestExpectedResult;
+    if (body_field != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("First comment body", body_field.string);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "comments limited") != null);
 }
 
 test "graphql client reuses shared http client across instances" {

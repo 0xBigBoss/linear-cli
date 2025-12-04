@@ -1,0 +1,33 @@
+{
+  "data": {
+    "issue": {
+      "id": "issue-700",
+      "identifier": "LIN-700",
+      "title": "Issue with comments",
+      "description": "Has comments",
+      "state": { "name": "Todo", "type": "todo" },
+      "assignee": { "name": "Tester" },
+      "priorityLabel": "High",
+      "url": "https://linear.app/example/issue/700",
+      "createdAt": "2024-05-12T12:00:00Z",
+      "updatedAt": "2024-05-13T13:00:00Z",
+      "comments": {
+        "nodes": [
+          {
+            "id": "comment-1",
+            "body": "First comment body",
+            "createdAt": "2024-05-12T14:00:00Z",
+            "user": { "name": "Alice" }
+          },
+          {
+            "id": "comment-2",
+            "body": "Second comment body",
+            "createdAt": "2024-05-12T15:00:00Z",
+            "user": { "name": "Bob" }
+          }
+        ],
+        "pageInfo": { "hasNextPage": true }
+      }
+    }
+  }
+}
