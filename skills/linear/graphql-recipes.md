@@ -132,10 +132,10 @@ linear gql --query /tmp/file-upload.graphql \
 
 ```bash
 # Extract uploadUrl and headers from response.uploadFile, then:
-# Headers typically include x-amz-* fields required by S3
+# Include every header returned (x-goog-*/x-amz-* and Content-Disposition)
 curl -X PUT "UPLOAD_URL_FROM_RESPONSE" \
   -H "Content-Type: image/png" \
-  -H "x-amz-acl: VALUE_FROM_HEADERS" \
+  -H "HEADER_KEY_FROM_RESPONSE: HEADER_VALUE" \
   --data-binary @screenshot.png
 ```
 
@@ -147,6 +147,8 @@ The `assetUrl` from `uploadFile` can be embedded in markdown:
 ```
 
 Use in issue description or comment body.
+
+**Note:** Accessing `assetUrl` outside the Linear app requires an `Authorization: <API key>` header; unauthenticated requests return 401.
 
 ---
 

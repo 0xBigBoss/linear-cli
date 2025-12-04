@@ -109,7 +109,7 @@ Progress:
 | Empty results | No team specified | Add `--team TEAM_KEY` |
 | 401 Unauthorized | Invalid/missing API key | Run `linear auth test` |
 | Mutation does nothing | Missing confirmation | Add `--yes` flag |
-| Can't find issue | Using UUID in `issue view` | Use identifier (ENG-123) for view/update/delete main arg |
+| Can't find issue | Wrong ID or missing access | `issue view` accepts identifier or UUID; verify spelling and permissions |
 | issue link fails | Using identifier | `issue link` requires UUIDs for all args |
 | --parent fails | Using identifier | `--parent` flag requires UUID, not identifier |
 
