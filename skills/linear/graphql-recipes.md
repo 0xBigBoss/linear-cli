@@ -17,6 +17,8 @@ Advanced operations using `linear gql` for functionality not covered by built-in
 
 ## Link Two Issues
 
+**CLI alternative:** `linear issue link UUID --blocks|--related|--duplicate OTHER_UUID --yes`
+
 Creates relationships between issues. Relation types: `blocks`, `duplicate`, `related`.
 
 ```bash
@@ -150,6 +152,8 @@ Use in issue description or comment body.
 
 ## Set Issue Parent
 
+**CLI alternative:** `linear issue update CHILD_ID --parent PARENT_UUID --yes`
+
 Makes an issue a sub-issue of another.
 
 ```bash
@@ -199,6 +203,8 @@ linear gql --query /tmp/issue-relations.graphql \
 ---
 
 ## Assign Issue
+
+**CLI alternative:** `linear issue update ID --assignee me|USER_ID --yes`
 
 Assigns an issue to a user.
 

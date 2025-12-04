@@ -72,7 +72,7 @@ Verify each command in the table works:
 - [ ] `linear issue view ID`
 - [ ] `linear issue create` (with required flags)
 - [ ] `linear issue update ID` (with at least one field)
-- [ ] `linear issue link ID` (with relation flag)
+- [ ] `linear issue link UUID` (with relation flag - **requires UUIDs**, see Phase 6)
 - [ ] `linear issue delete ID` (dry-run first)
 - [ ] `linear teams list`
 - [ ] `linear me`
@@ -96,25 +96,29 @@ Verify each error scenario:
 Test issue update functionality:
 - [ ] `linear issue update ID --assignee me --yes` - assigns to current user
 - [ ] `linear issue update ID --priority 1 --yes` - sets priority
-- [ ] `linear issue update ID --state STATE_ID --yes` - changes state
+- [ ] `linear issue update ID --state STATE_ID --yes` - changes state (STATE_ID is a UUID)
 - [ ] `linear issue update ID --title "New Title" --yes` - updates title
-- [ ] `linear issue update ID --parent PARENT_ID --yes` - sets parent (sub-issue)
+- [ ] `linear issue update ID --parent PARENT_UUID --yes` - sets parent (**requires UUID**)
+- [ ] `linear issue update ID --parent IDENTIFIER --yes` → error "Argument Validation Error" (identifiers not supported)
 - [ ] `linear issue update ID --yes` (no fields) → error "at least one field"
 - [ ] `linear issue update ID --priority 1` (no --yes) → error "confirmation required"
 
 ### Phase 6: Issue Link Command
-Test issue linking functionality:
-- [ ] `linear issue link ID --blocks OTHER_ID --yes` - creates blocks relation
-- [ ] `linear issue link ID --related OTHER_ID --yes` - creates related relation
-- [ ] `linear issue link ID --duplicate OTHER_ID --yes` - marks as duplicate
-- [ ] `linear issue link ID --yes` (no relation) → error "exactly one of --blocks"
-- [ ] `linear issue link ID --blocks A --related B --yes` → error "only one of --blocks"
+Test issue linking functionality (**all IDs must be UUIDs**):
+- [ ] `linear issue link UUID --blocks OTHER_UUID --yes` - creates blocks relation
+- [ ] `linear issue link UUID --related OTHER_UUID --yes` - creates related relation
+- [ ] `linear issue link UUID --duplicate OTHER_UUID --yes` - marks as duplicate
+- [ ] `linear issue link UUID --yes` (no relation) → error "exactly one of --blocks"
+- [ ] `linear issue link UUID --blocks A --related B --yes` → error "only one of --blocks"
+- [ ] `linear issue link IDENTIFIER --blocks OTHER_UUID --yes` → error "Argument Validation Error" (identifiers not supported)
+
+To get UUIDs: `linear issue view ID --json | jq -r '.issue.id'`
 
 ### Phase 7: Hygiene Section
 Verify hygiene examples from SKILL.md work:
-- [ ] Assignment workflow: `linear issue update ENG-123 --assignee me --yes`
-- [ ] Sub-issue workflow: `linear issue update ENG-123 --parent ENG-100 --yes`
-- [ ] Blocking workflow: `linear issue link ENG-123 --blocks ENG-456 --yes`
+- [ ] Assignment workflow: `linear issue update ENG-123 --assignee me --yes` (identifiers work for main ID)
+- [ ] Sub-issue workflow: `linear issue update ENG-123 --parent PARENT_UUID --yes` (**--parent requires UUID**)
+- [ ] Blocking workflow: `linear issue link ISSUE_UUID --blocks OTHER_UUID --yes` (**both must be UUIDs**)
 
 ### Phase 8: GraphQL Recipes (graphql-recipes.md)
 Test at least these recipes:
