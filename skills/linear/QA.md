@@ -43,7 +43,7 @@ After the skill documentation has loaded, run these checks and confirm with me:
    - If versions don't match, the binary may be stale - rebuild with `zig build`
 2. Run `linear auth test` - is a test API key configured?
 3. Run `linear teams list` - which team should I use for testing?
-4. Do I have permission to create/delete test issues in this workspace?
+4. Do I have permission to create/delete test issues and projects in this workspace?
 
 Stop and wait for my answers before proceeding to Step 3.
 
@@ -66,6 +66,7 @@ Test each recipe exactly as documented:
 - [ ] `linear issue view IDENTIFIER --json`
 - [ ] `linear teams list`
 - [ ] `linear auth test`
+- [ ] `linear projects list --team TEAM_KEY --state planned --limit 5`
 
 ### Phase 2: Command Reference Table
 Verify each command in the table works:
@@ -80,6 +81,12 @@ Verify each command in the table works:
 - [ ] `linear me`
 - [ ] `linear gql`
 - [ ] `linear help CMD`
+- [ ] `linear projects list` (state filters resolve via projectStatuses)
+- [ ] `linear project view ID|SLUG`
+- [ ] `linear project create --team TEAM_ID --name "QA Project" --state planned --yes`
+- [ ] `linear project update ID|SLUG --state started --yes`
+- [ ] `linear project delete ID|SLUG --yes`
+- [ ] `linear project add-issue PROJECT_ID ISSUE_ID --yes` / `remove-issue` with --yes
 
 ### Phase 3: Common Flags
 - [ ] `--json` produces valid JSON
@@ -177,6 +184,7 @@ Verify error handling matches documentation:
 Verify links are valid:
 - [ ] Linear API Docs link
 - [ ] Apollo Studio link
+- [ ] Project state mapping note: `projects list --state NAME` filters via `statusId` from `projectStatuses` (planned/started/backlog/etc.)
 
 ## Reporting
 
