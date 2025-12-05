@@ -78,7 +78,7 @@ pub fn run(ctx: Context) !u8 {
     var stderr_buf: [0]u8 = undefined;
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
     var stderr = &stderr_writer.interface;
-    const opts = parseOptions(ctx.args) catch |err| {
+    var opts = parseOptions(ctx.args) catch |err| {
         const message = switch (err) {
             error.InvalidPageCount => "invalid --pages value",
             error.InvalidLimit => "invalid --limit value",
@@ -185,6 +185,21 @@ pub fn run(ctx: Context) !u8 {
     client.max_retries = ctx.retries;
     client.timeout_ms = ctx.timeout_ms;
     if (ctx.endpoint) |ep| client.endpoint = ep;
+
+    var owned_assignee: ?[]const u8 = null;
+    defer if (owned_assignee) |value| ctx.allocator.free(value);
+    if (opts.assignee) |assignee_raw| {
+        const trimmed = std.mem.trim(u8, assignee_raw, " \t");
+        if (std.ascii.eqlIgnoreCase(trimmed, "me")) {
+            const viewer_id = common.resolveViewerId(ctx.allocator, &client, stderr, "issues list") catch {
+                return 1;
+            };
+            owned_assignee = viewer_id;
+            opts.assignee = viewer_id;
+        } else if (trimmed.len != assignee_raw.len or trimmed.ptr != assignee_raw.ptr) {
+            opts.assignee = trimmed;
+        }
+    }
 
     var responses = std.ArrayListUnmanaged(graphql.GraphqlClient.Response){};
     defer {
