@@ -240,7 +240,7 @@ fn buildVariables(
     var clauses = std.json.Array.init(allocator);
     for (fields) |field| {
         switch (field) {
-            .identifier => try appendIdentifierClause(allocator, &clauses, query_value),
+            .identifier => try appendIdentifierClause(allocator, &clauses, comparator, query_value),
             else => try appendClause(allocator, &clauses, field, comparator, query_value),
         }
     }
@@ -337,6 +337,7 @@ fn appendClause(
 fn appendIdentifierClause(
     allocator: Allocator,
     clauses: *std.json.Array,
+    comparator: []const u8,
     query_value: []const u8,
 ) !void {
     if (parseIssueNumber(query_value)) |num| {
@@ -350,7 +351,7 @@ fn appendIdentifierClause(
     }
 
     var cmp = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
-    try cmp.object.put("contains", .{ .string = query_value });
+    try cmp.object.put(comparator, .{ .string = query_value });
 
     var entry = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
     try entry.object.put("searchableContent", cmp);
