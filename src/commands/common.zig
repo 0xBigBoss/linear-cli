@@ -133,6 +133,155 @@ pub const ResolvedId = struct {
     owned: bool = false,
 };
 
+pub fn resolveViewerId(
+    allocator: Allocator,
+    client: *graphql.GraphqlClient,
+    stderr: anytype,
+    prefix: []const u8,
+) ![]const u8 {
+    const query = "query Viewer { viewer { id } }";
+
+    var response = send(prefix, client, allocator, .{
+        .query = query,
+        .variables = null,
+        .operation_name = "Viewer",
+    }, stderr) catch {
+        return CommandError.CommandFailed;
+    };
+    defer response.deinit();
+
+    checkResponse(prefix, &response, stderr, client.api_key) catch {
+        return CommandError.CommandFailed;
+    };
+
+    const data_value = response.data() orelse {
+        try stderr.print("{s}: response missing data\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    const viewer_obj = getObjectField(data_value, "viewer") orelse {
+        try stderr.print("{s}: viewer not found in response\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    const id_value = getStringField(viewer_obj, "id") orelse {
+        try stderr.print("{s}: viewer id missing in response\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+
+    const duped = allocator.dupe(u8, id_value) catch {
+        try stderr.print("{s}: failed to allocate viewer id\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    return duped;
+}
+
+pub fn resolveIssueId(
+    allocator: Allocator,
+    client: *graphql.GraphqlClient,
+    identifier: []const u8,
+    stderr: anytype,
+    prefix: []const u8,
+) !ResolvedId {
+    const trimmed = std.mem.trim(u8, identifier, " \t");
+    if (trimmed.len == 0) {
+        try stderr.print("{s}: missing issue identifier\n", .{prefix});
+        return CommandError.CommandFailed;
+    }
+    if (looksLikeIssueId(trimmed)) return .{ .value = trimmed };
+
+    const dash_index = std.mem.lastIndexOfScalar(u8, trimmed, '-') orelse {
+        try stderr.print("{s}: invalid issue identifier; expected TEAM-NUMBER\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    if (dash_index + 1 >= trimmed.len) {
+        try stderr.print("{s}: invalid issue identifier; expected TEAM-NUMBER\n", .{prefix});
+        return CommandError.CommandFailed;
+    }
+
+    const team_key = trimmed[0..dash_index];
+    const number_raw = trimmed[dash_index + 1 ..];
+    const number_value = std.fmt.parseInt(u64, number_raw, 10) catch {
+        try stderr.print("{s}: invalid issue identifier; expected TEAM-NUMBER\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    const number_i64: i64 = std.math.cast(i64, number_value) orelse {
+        try stderr.print("{s}: issue number out of range\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const var_alloc = arena.allocator();
+
+    var filter = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+
+    var team_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var key_cmp = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try key_cmp.object.put("eq", .{ .string = team_key });
+    try team_obj.object.put("key", key_cmp);
+    try filter.object.put("team", team_obj);
+
+    var number_cmp = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try number_cmp.object.put("eq", .{ .integer = number_i64 });
+    try filter.object.put("number", number_cmp);
+
+    var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try variables.object.put("filter", filter);
+    try variables.object.put("first", .{ .integer = 1 });
+
+    const query =
+        \\query IssueLookup($filter: IssueFilter!, $first: Int!) {
+        \\  issues(filter: $filter, first: $first) {
+        \\    nodes { id }
+        \\  }
+        \\}
+    ;
+
+    var response = send(prefix, client, allocator, .{
+        .query = query,
+        .variables = variables,
+        .operation_name = "IssueLookup",
+    }, stderr) catch {
+        return CommandError.CommandFailed;
+    };
+    defer response.deinit();
+
+    checkResponse(prefix, &response, stderr, client.api_key) catch {
+        return CommandError.CommandFailed;
+    };
+
+    const data_value = response.data() orelse {
+        try stderr.print("{s}: response missing data\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    const issues_obj = getObjectField(data_value, "issues") orelse {
+        try stderr.print("{s}: issues not found in response\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    const nodes_array = getArrayField(issues_obj, "nodes") orelse {
+        try stderr.print("{s}: nodes missing in response\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    if (nodes_array.items.len == 0) {
+        try stderr.print("{s}: issue '{s}' not found\n", .{ prefix, trimmed });
+        return CommandError.CommandFailed;
+    }
+    const node = nodes_array.items[0];
+    if (node != .object) {
+        try stderr.print("{s}: invalid issue payload\n", .{prefix});
+        return CommandError.CommandFailed;
+    }
+    const id_value = getStringField(node, "id") orelse {
+        try stderr.print("{s}: issue id missing in response\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+
+    const duped = allocator.dupe(u8, id_value) catch {
+        try stderr.print("{s}: failed to allocate issue id\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    return .{ .value = duped, .owned = true };
+}
+
 pub fn resolveProjectId(
     allocator: Allocator,
     client: *graphql.GraphqlClient,
@@ -277,6 +426,22 @@ pub fn isValidProjectState(value: []const u8) bool {
 
 fn looksLikeProjectId(value: []const u8) bool {
     return isUuid(value) or std.mem.startsWith(u8, value, "proj_");
+}
+
+fn looksLikeIssueId(value: []const u8) bool {
+    return isUuid(value) or
+        std.mem.startsWith(u8, value, "iss_") or
+        std.mem.startsWith(u8, value, "issue-") or
+        isLikelyCuid(value);
+}
+
+fn isLikelyCuid(value: []const u8) bool {
+    if (value.len < 20 or value.len > 36) return false;
+    if (!std.ascii.isAlphabetic(value[0])) return false;
+    for (value) |ch| {
+        if (!std.ascii.isAlphanumeric(ch)) return false;
+    }
+    return true;
 }
 
 fn isUuid(value: []const u8) bool {
