@@ -1,0 +1,12 @@
+{
+  "data": {
+    "issueUpdate": {
+      "success": true,
+      "issue": {
+        "id": "issue-1",
+        "identifier": "ENG-42",
+        "project": null
+      }
+    }
+  }
+}

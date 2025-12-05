@@ -1,0 +1,13 @@
+{
+  "data": {
+    "projectCreate": {
+      "success": true,
+      "project": {
+        "id": "proj_new",
+        "name": "New Project",
+        "slugId": "new-project",
+        "url": "https://linear.app/projects/proj_new"
+      }
+    }
+  }
+}

@@ -15,6 +15,12 @@ const issue_delete_command = @import("commands/issue_delete.zig");
 const issue_update_command = @import("commands/issue_update.zig");
 const issue_link_command = @import("commands/issue_link.zig");
 const search_command = @import("commands/search.zig");
+const projects_command = @import("commands/projects.zig");
+const project_view_command = @import("commands/project_view.zig");
+const project_create_command = @import("commands/project_create.zig");
+const project_update_command = @import("commands/project_update.zig");
+const project_delete_command = @import("commands/project_delete.zig");
+const project_issues_command = @import("commands/project_issues.zig");
 
 const version_string = build_options.version;
 const GlobalOptions = cli.GlobalOptions;
@@ -185,6 +191,23 @@ fn run() !u8 {
         });
     }
 
+    if (std.mem.eql(u8, subcommand, "projects")) {
+        if (sub_args.len == 0 or !std.mem.eql(u8, sub_args[0], "list")) {
+            try stderr.print("projects: expected 'list'\n", .{});
+            try printUsage(stderr);
+            return 1;
+        }
+        return projects_command.run(.{
+            .allocator = allocator,
+            .config = &cfg,
+            .args = sub_args[1..],
+            .json_output = json_output,
+            .retries = opts.retries,
+            .timeout_ms = opts.timeout_ms,
+            .endpoint = opts.endpoint,
+        });
+    }
+
     if (std.mem.eql(u8, subcommand, "issues")) {
         if (sub_args.len == 0 or !std.mem.eql(u8, sub_args[0], "list")) {
             try stderr.print("issues: expected 'list'\n", .{});
@@ -271,6 +294,75 @@ fn run() !u8 {
         return 1;
     }
 
+    if (std.mem.eql(u8, subcommand, "project")) {
+        if (sub_args.len == 0) {
+            try stderr.print("project: expected 'view', 'create', 'update', 'delete', 'add-issue', or 'remove-issue'\n", .{});
+            try printUsage(stderr);
+            return 1;
+        }
+        const project_sub = sub_args[0];
+        const project_args = sub_args[1..];
+        if (std.mem.eql(u8, project_sub, "view")) {
+            return project_view_command.run(.{
+                .allocator = allocator,
+                .config = &cfg,
+                .args = project_args,
+                .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
+            });
+        }
+        if (std.mem.eql(u8, project_sub, "create")) {
+            return project_create_command.run(.{
+                .allocator = allocator,
+                .config = &cfg,
+                .args = project_args,
+                .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
+            });
+        }
+        if (std.mem.eql(u8, project_sub, "update")) {
+            return project_update_command.run(.{
+                .allocator = allocator,
+                .config = &cfg,
+                .args = project_args,
+                .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
+            });
+        }
+        if (std.mem.eql(u8, project_sub, "delete")) {
+            return project_delete_command.run(.{
+                .allocator = allocator,
+                .config = &cfg,
+                .args = project_args,
+                .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
+            });
+        }
+        if (std.mem.eql(u8, project_sub, "add-issue") or std.mem.eql(u8, project_sub, "remove-issue")) {
+            return project_issues_command.run(.{
+                .allocator = allocator,
+                .config = &cfg,
+                .args = sub_args,
+                .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
+            });
+        }
+
+        try stderr.print("project: unknown command: {s}\n", .{project_sub});
+        try printUsage(stderr);
+        return 1;
+    }
+
     try stderr.print("unknown command: {s}\n", .{subcommand});
     try printUsage(stderr);
     return 1;
@@ -315,6 +407,52 @@ fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
 
     if (std.mem.eql(u8, target, "teams")) {
         try teams_command.usage(out);
+        return 0;
+    }
+
+    if (std.mem.eql(u8, target, "projects")) {
+        try projects_command.usage(out);
+        return 0;
+    }
+
+    if (std.mem.eql(u8, target, "project")) {
+        if (tail.len > 0) {
+            if (std.mem.eql(u8, tail[0], "view")) {
+                try project_view_command.usage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "create")) {
+                try project_create_command.usage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "update")) {
+                try project_update_command.usage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "delete")) {
+                try project_delete_command.usage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "add-issue")) {
+                try project_issues_command.addUsage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "remove-issue")) {
+                try project_issues_command.removeUsage(out);
+                return 0;
+            }
+        }
+        try project_view_command.usage(out);
+        try out.writeByte('\n');
+        try project_create_command.usage(out);
+        try out.writeByte('\n');
+        try project_update_command.usage(out);
+        try out.writeByte('\n');
+        try project_delete_command.usage(out);
+        try out.writeByte('\n');
+        try project_issues_command.addUsage(out);
+        try out.writeByte('\n');
+        try project_issues_command.removeUsage(out);
         return 0;
     }
 
@@ -381,8 +519,10 @@ fn printUsage(writer: anytype) !void {
         \\  me                   Show current user
         \\  teams list           List teams
         \\  search               Search issues by keyword
+        \\  projects list        List projects
         \\  issues list          List issues
         \\  issue view|create|update|delete|link  Manage issues
+        \\  project view|create|update|delete|add-issue|remove-issue  Manage projects
         \\  gql                  Run an arbitrary GraphQL query against Linear
         \\
         \\Use 'linear help <command>' for command-specific help and examples.

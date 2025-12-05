@@ -23,6 +23,7 @@ const Options = struct {
     state: ?[]const u8 = null,
     priority: ?i64 = null,
     title: ?[]const u8 = null,
+    project: ?[]const u8 = null,
     yes: bool = false,
     help: bool = false,
     quiet: bool = false,
@@ -52,7 +53,7 @@ pub fn run(ctx: Context) !u8 {
     };
 
     // Require at least one field to update
-    if (opts.assignee == null and opts.parent == null and opts.state == null and opts.priority == null and opts.title == null) {
+    if (opts.assignee == null and opts.parent == null and opts.state == null and opts.priority == null and opts.title == null and opts.project == null) {
         try stderr.print("issue update: at least one field to update is required\n", .{});
         return 1;
     }
@@ -100,6 +101,9 @@ pub fn run(ctx: Context) !u8 {
     if (opts.title) |title_value| {
         try input.object.put("title", .{ .string = title_value });
     }
+    if (opts.project) |project_id| {
+        try input.object.put("projectId", .{ .string = project_id });
+    }
 
     var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
     try variables.object.put("id", .{ .string = target });
@@ -121,6 +125,7 @@ pub fn run(ctx: Context) !u8 {
         \\      url
         \\      state { name }
         \\      assignee { name }
+        \\      project { name }
         \\      parent { identifier }
         \\    }
         \\  }
@@ -192,6 +197,8 @@ pub fn run(ctx: Context) !u8 {
     const assignee_name = if (assignee_obj) |a| common.getStringField(a, "name") else null;
     const parent_obj = common.getObjectField(issue, "parent");
     const parent_identifier = if (parent_obj) |p| common.getStringField(p, "identifier") else null;
+    const project_obj = common.getObjectField(issue, "project");
+    const project_name = if (project_obj) |p| common.getStringField(p, "name") else null;
 
     var out_buf: [0]u8 = undefined;
     var out_writer = std.fs.File.stdout().writer(&out_buf);
@@ -219,6 +226,10 @@ pub fn run(ctx: Context) !u8 {
     if (assignee_name) |an| {
         try pairs.append(ctx.allocator, .{ .key = "Assignee", .value = an });
         try data_pairs.append(ctx.allocator, .{ .key = "assignee", .value = an });
+    }
+    if (project_name) |pn| {
+        try pairs.append(ctx.allocator, .{ .key = "Project", .value = pn });
+        try data_pairs.append(ctx.allocator, .{ .key = "project", .value = pn });
     }
     if (parent_identifier) |pi| {
         try pairs.append(ctx.allocator, .{ .key = "Parent", .value = pi });
@@ -344,6 +355,17 @@ pub fn parseOptions(args: []const []const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--project")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.project = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--project=")) {
+            opts.project = arg["--project=".len..];
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--yes") or std.mem.eql(u8, arg, "--force")) {
             opts.yes = true;
             idx += 1;
@@ -362,13 +384,14 @@ pub fn parseOptions(args: []const []const u8) !Options {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue update <ID|IDENTIFIER> [--assignee USER_ID|me] [--parent ISSUE_ID] [--state STATE_ID] [--priority N] [--title TEXT] [--yes] [--quiet] [--data-only] [--help]
+        \\Usage: linear issue update <ID|IDENTIFIER> [--assignee USER_ID|me] [--parent ISSUE_ID] [--state STATE_ID] [--priority N] [--title TEXT] [--project PROJECT_ID] [--yes] [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --assignee USER_ID|me  Assign to user (use 'me' for current user)
         \\  --parent ISSUE_ID      Set parent issue (make sub-issue)
         \\  --state STATE_ID       Change workflow state
         \\  --priority N           Set priority (0-4)
         \\  --title TEXT           Update title
+        \\  --project PROJECT_ID   Attach to project
         \\  --yes                  Skip confirmation prompt (alias: --force)
         \\  --quiet                Print only the identifier
         \\  --data-only            Emit tab-separated fields without formatting (or JSON object with --json)

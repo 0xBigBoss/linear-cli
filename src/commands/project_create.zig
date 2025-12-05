@@ -17,14 +17,12 @@ pub const Context = struct {
 };
 
 const Options = struct {
+    name: ?[]const u8 = null,
     team: ?[]const u8 = null,
-    title: ?[]const u8 = null,
     description: ?[]const u8 = null,
-    priority: ?i64 = null,
+    start_date: ?[]const u8 = null,
+    target_date: ?[]const u8 = null,
     state: ?[]const u8 = null,
-    assignee: ?[]const u8 = null,
-    labels: ?[]const u8 = null,
-    project: ?[]const u8 = null,
     yes: bool = false,
     help: bool = false,
     quiet: bool = false,
@@ -41,7 +39,7 @@ pub fn run(ctx: Context) !u8 {
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
     var stderr = &stderr_writer.interface;
     const opts = parseOptions(ctx.args) catch |err| {
-        try stderr.print("issue create: {s}\n", .{@errorName(err)});
+        try stderr.print("project create: {s}\n", .{@errorName(err)});
         try usage(stderr);
         return 1;
     };
@@ -53,16 +51,16 @@ pub fn run(ctx: Context) !u8 {
         return 0;
     }
 
-    if (opts.team == null) {
-        try stderr.print("issue create: --team is required\n", .{});
+    if (opts.name == null) {
+        try stderr.print("project create: --name is required\n", .{});
         return 1;
     }
-    if (opts.title == null) {
-        try stderr.print("issue create: --title is required\n", .{});
+    if (opts.team == null) {
+        try stderr.print("project create: --team is required\n", .{});
         return 1;
     }
 
-    const api_key = common.requireApiKey(ctx.config, null, stderr, "issue create") catch {
+    const api_key = common.requireApiKey(ctx.config, null, stderr, "project create") catch {
         return 1;
     };
 
@@ -72,8 +70,11 @@ pub fn run(ctx: Context) !u8 {
     client.timeout_ms = ctx.timeout_ms;
     if (ctx.endpoint) |ep| client.endpoint = ep;
 
+    var status_id: ?[]const u8 = null;
+    defer if (status_id) |sid| ctx.allocator.free(sid);
+
     const team_id = resolveTeamId(ctx, &client, opts.team.?, stderr) catch |err| {
-        try stderr.print("issue create: {s}\n", .{@errorName(err)});
+        try stderr.print("project create: {s}\n", .{@errorName(err)});
         return 1;
     };
     defer if (team_id.owned) ctx.allocator.free(team_id.value);
@@ -83,76 +84,60 @@ pub fn run(ctx: Context) !u8 {
     const var_alloc = arena.allocator();
 
     var input = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
-    try input.object.put("teamId", .{ .string = team_id.value });
-    try input.object.put("title", .{ .string = opts.title.? });
+    try input.object.put("name", .{ .string = opts.name.? });
+    var team_ids = std.json.Array.init(var_alloc);
+    try team_ids.append(.{ .string = team_id.value });
+    try input.object.put("teamIds", .{ .array = team_ids });
     if (opts.description) |desc| {
         try input.object.put("description", .{ .string = desc });
     }
-    if (opts.priority) |prio| {
-        try input.object.put("priority", .{ .integer = prio });
+    if (opts.start_date) |start_value| {
+        try input.object.put("startDate", .{ .string = start_value });
     }
-    if (opts.state) |state_id| {
-        try input.object.put("stateId", .{ .string = state_id });
+    if (opts.target_date) |target_value| {
+        try input.object.put("targetDate", .{ .string = target_value });
     }
-    if (opts.assignee) |assignee_id| {
-        try input.object.put("assigneeId", .{ .string = assignee_id });
+    if (opts.state) |state_value| {
+        status_id = common.resolveProjectStatusId(ctx.allocator, &client, state_value, stderr, "project create") catch {
+            return 1;
+        };
     }
-    if (opts.labels) |labels_value| {
-        var label_ids = std.json.Array.init(var_alloc);
-        var iter = std.mem.tokenizeScalar(u8, labels_value, ',');
-        var added: usize = 0;
-        while (iter.next()) |entry| {
-            const trimmed = std.mem.trim(u8, entry, " \t");
-            if (trimmed.len == 0) continue;
-            try label_ids.append(.{ .string = trimmed });
-            added += 1;
-        }
-        if (added > 0) {
-            try input.object.put("labelIds", .{ .array = label_ids });
-        }
-    }
-    if (opts.project) |project_id| {
-        try input.object.put("projectId", .{ .string = project_id });
+    if (status_id) |sid| {
+        try input.object.put("statusId", .{ .string = sid });
     }
 
     var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
     try variables.object.put("input", input);
 
     if (!opts.yes) {
-        try stderr.print("issue create: confirmation required; re-run with --yes to proceed\n", .{});
+        try stderr.print("project create: confirmation required; re-run with --yes to proceed\n", .{});
         return 1;
     }
 
     const mutation =
-        \\mutation IssueCreate($input: IssueCreateInput!) {
-        \\  issueCreate(input: $input) {
+        \\mutation ProjectCreate($input: ProjectCreateInput!) {
+        \\  projectCreate(input: $input) {
         \\    success
-        \\    issue {
-        \\      id
-        \\      identifier
-        \\      title
-        \\      url
-        \\    }
-        \\    lastSyncId
+        \\    project { id name slugId url }
         \\  }
         \\}
     ;
 
-    var response = common.send("issue create", &client, ctx.allocator, .{
+    var response = common.send("project create", &client, ctx.allocator, .{
         .query = mutation,
         .variables = variables,
-        .operation_name = "IssueCreate",
+        .operation_name = "ProjectCreate",
     }, stderr) catch {
         return 1;
     };
     defer response.deinit();
 
-    common.checkResponse("issue create", &response, stderr, api_key) catch {
+    common.checkResponse("project create", &response, stderr, api_key) catch {
         return 1;
     };
 
     const data_value = response.data() orelse {
-        try stderr.print("issue create: response missing data\n", .{});
+        try stderr.print("project create: response missing data\n", .{});
         return 1;
     };
 
@@ -163,49 +148,51 @@ pub fn run(ctx: Context) !u8 {
         return 0;
     }
 
-    const payload = common.getObjectField(data_value, "issueCreate") orelse {
-        try stderr.print("issue create: issueCreate missing in response\n", .{});
+    const payload = common.getObjectField(data_value, "projectCreate") orelse {
+        try stderr.print("project create: projectCreate missing in response\n", .{});
         return 1;
     };
-
     const success = common.getBoolField(payload, "success") orelse false;
-    const issue_obj = common.getObjectField(payload, "issue");
+    const project_obj = common.getObjectField(payload, "project");
     if (!success) {
         if (payload.object.get("userError")) |user_error| {
             if (user_error == .string) {
-                try stderr.print("issue create: {s}\n", .{user_error.string});
+                try stderr.print("project create: {s}\n", .{user_error.string});
                 return 1;
             }
             if (user_error == .object) {
                 if (user_error.object.get("message")) |msg| {
                     if (msg == .string) {
-                        try stderr.print("issue create: {s}\n", .{msg.string});
+                        try stderr.print("project create: {s}\n", .{msg.string});
                         return 1;
                     }
                 }
             }
         }
-        try stderr.print("issue create: request failed\n", .{});
+        try stderr.print("project create: request failed\n", .{});
         return 1;
     }
 
-    const issue = issue_obj orelse {
-        try stderr.print("issue create: issue missing in response\n", .{});
+    const project = project_obj orelse {
+        try stderr.print("project create: project missing in response\n", .{});
         return 1;
     };
 
-    const identifier = common.getStringField(issue, "identifier") orelse "(unknown)";
-    const title_value = common.getStringField(issue, "title") orelse opts.title.?;
-    const url = common.getStringField(issue, "url") orelse "";
+    const id = common.getStringField(project, "id") orelse "(unknown)";
+    const name = common.getStringField(project, "name") orelse opts.name.?;
+    const slug = common.getStringField(project, "slugId") orelse "";
+    const url = common.getStringField(project, "url") orelse "";
 
-    const pairs = [_]printer.KeyValue{
-        .{ .key = "Identifier", .value = identifier },
-        .{ .key = "Title", .value = title_value },
+    const display_pairs = [_]printer.KeyValue{
+        .{ .key = "ID", .value = id },
+        .{ .key = "Name", .value = name },
+        .{ .key = "Slug", .value = slug },
         .{ .key = "URL", .value = url },
     };
     const data_pairs = [_]printer.KeyValue{
-        .{ .key = "identifier", .value = identifier },
-        .{ .key = "title", .value = title_value },
+        .{ .key = "id", .value = id },
+        .{ .key = "name", .value = name },
+        .{ .key = "slug", .value = slug },
         .{ .key = "url", .value = url },
     };
 
@@ -214,7 +201,8 @@ pub fn run(ctx: Context) !u8 {
     var stdout_iface = &out_writer.interface;
 
     if (opts.quiet) {
-        try stdout_iface.writeAll(identifier);
+        const quiet_value = if (slug.len > 0) slug else id;
+        try stdout_iface.writeAll(quiet_value);
         try stdout_iface.writeByte('\n');
         return 0;
     }
@@ -233,7 +221,7 @@ pub fn run(ctx: Context) !u8 {
         return 0;
     }
 
-    try printer.printKeyValues(stdout_iface, pairs[0..]);
+    try printer.printKeyValues(stdout_iface, display_pairs[0..]);
     return 0;
 }
 
@@ -267,7 +255,7 @@ fn resolveTeamId(ctx: Context, client: *graphql.GraphqlClient, value: []const u8
         \\}
     ;
 
-    var response = common.send("issue create", client, ctx.allocator, .{
+    var response = common.send("project create", client, ctx.allocator, .{
         .query = query,
         .variables = variables,
         .operation_name = "TeamLookup",
@@ -276,7 +264,7 @@ fn resolveTeamId(ctx: Context, client: *graphql.GraphqlClient, value: []const u8
     };
     defer response.deinit();
 
-    common.checkResponse("issue create", &response, stderr, client.api_key) catch {
+    common.checkResponse("project create", &response, stderr, client.api_key) catch {
         return error.InvalidTeam;
     };
 
@@ -289,12 +277,12 @@ fn resolveTeamId(ctx: Context, client: *graphql.GraphqlClient, value: []const u8
     const id_value = common.getStringField(node, "id") orelse return error.InvalidTeam;
 
     const updated = ctx.config.cacheTeamId(value, id_value) catch |err| blk: {
-        try stderr.print("issue create: warning: failed to cache team id: {s}\n", .{@errorName(err)});
+        try stderr.print("project create: warning: failed to cache team id: {s}\n", .{@errorName(err)});
         break :blk false;
     };
     if (updated) {
         ctx.config.save(ctx.allocator, null) catch |err| {
-            try stderr.print("issue create: warning: failed to persist team cache: {s}\n", .{@errorName(err)});
+            try stderr.print("project create: warning: failed to persist team cache: {s}\n", .{@errorName(err)});
         };
         if (ctx.config.lookupTeamId(value)) |cached| {
             return .{ .value = cached, .owned = false };
@@ -316,7 +304,7 @@ fn isUuid(value: []const u8) bool {
     return true;
 }
 
-pub fn parseOptions(args: []const []const u8) !Options {
+pub fn parseOptions(args: [][]const u8) !Options {
     var opts = Options{};
     var idx: usize = 0;
     while (idx < args.len) {
@@ -336,6 +324,17 @@ pub fn parseOptions(args: []const []const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--name")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.name = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--name=")) {
+            opts.name = arg["--name=".len..];
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--team")) {
             if (idx + 1 >= args.len) return error.MissingValue;
             opts.team = args[idx + 1];
@@ -344,17 +343,6 @@ pub fn parseOptions(args: []const []const u8) !Options {
         }
         if (std.mem.startsWith(u8, arg, "--team=")) {
             opts.team = arg["--team=".len..];
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--title")) {
-            if (idx + 1 >= args.len) return error.MissingValue;
-            opts.title = args[idx + 1];
-            idx += 2;
-            continue;
-        }
-        if (std.mem.startsWith(u8, arg, "--title=")) {
-            opts.title = arg["--title=".len..];
             idx += 1;
             continue;
         }
@@ -369,14 +357,25 @@ pub fn parseOptions(args: []const []const u8) !Options {
             idx += 1;
             continue;
         }
-        if (std.mem.eql(u8, arg, "--priority")) {
+        if (std.mem.eql(u8, arg, "--start-date")) {
             if (idx + 1 >= args.len) return error.MissingValue;
-            opts.priority = try std.fmt.parseInt(i64, args[idx + 1], 10);
+            opts.start_date = args[idx + 1];
             idx += 2;
             continue;
         }
-        if (std.mem.startsWith(u8, arg, "--priority=")) {
-            opts.priority = try std.fmt.parseInt(i64, arg["--priority=".len..], 10);
+        if (std.mem.startsWith(u8, arg, "--start-date=")) {
+            opts.start_date = arg["--start-date=".len..];
+            idx += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--target-date")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.target_date = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--target-date=")) {
+            opts.target_date = arg["--target-date=".len..];
             idx += 1;
             continue;
         }
@@ -388,39 +387,6 @@ pub fn parseOptions(args: []const []const u8) !Options {
         }
         if (std.mem.startsWith(u8, arg, "--state=")) {
             opts.state = arg["--state=".len..];
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--assignee")) {
-            if (idx + 1 >= args.len) return error.MissingValue;
-            opts.assignee = args[idx + 1];
-            idx += 2;
-            continue;
-        }
-        if (std.mem.startsWith(u8, arg, "--assignee=")) {
-            opts.assignee = arg["--assignee=".len..];
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--labels")) {
-            if (idx + 1 >= args.len) return error.MissingValue;
-            opts.labels = args[idx + 1];
-            idx += 2;
-            continue;
-        }
-        if (std.mem.startsWith(u8, arg, "--labels=")) {
-            opts.labels = arg["--labels=".len..];
-            idx += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--project")) {
-            if (idx + 1 >= args.len) return error.MissingValue;
-            opts.project = args[idx + 1];
-            idx += 2;
-            continue;
-        }
-        if (std.mem.startsWith(u8, arg, "--project=")) {
-            opts.project = arg["--project=".len..];
             idx += 1;
             continue;
         }
@@ -437,23 +403,21 @@ pub fn parseOptions(args: []const []const u8) !Options {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--project PROJECT_ID] [--yes] [--quiet] [--data-only] [--help]
+        \\Usage: linear project create --name NAME --team ID|KEY [--description TEXT] [--start-date DATE] [--target-date DATE] [--state STATE] [--yes] [--quiet] [--data-only] [--help]
         \\Flags:
-        \\  --team ID|KEY        Team id or key (required)
-        \\  --title TITLE        Issue title (required)
-        \\  --description TEXT   Issue description
-        \\  --priority N         Priority number
-        \\  --state STATE_ID     State id to apply
-        \\  --assignee USER_ID   Assignee id
-        \\  --labels LIST        Comma-separated label ids
-        \\  --project PROJECT_ID Attach to project
-        \\  --yes                Skip confirmation prompt (alias: --force)
-        \\  --quiet              Print only the identifier
-        \\  --data-only          Emit tab-separated fields without formatting (or JSON object with --json)
-        \\  --help               Show this help message
+        \\  --name NAME         Project name (required)
+        \\  --team ID|KEY       Team id or key (required)
+        \\  --description TEXT  Project description
+        \\  --start-date DATE   ISO start date
+        \\  --target-date DATE  ISO target date
+        \\  --state STATE       Project state (backlog, planned, started, paused, completed, canceled)
+        \\  --yes               Skip confirmation prompt (alias: --force)
+        \\  --quiet             Print only the identifier
+        \\  --data-only         Emit tab-separated fields without formatting (or JSON object with --json)
+        \\  --help              Show this help message
         \\Examples:
-        \\  linear issue create --team ENG --title \"Fix bug\" --priority 2
-        \\  linear issue create --team ENG --title \"API error\" --labels abc,def --quiet
+        \\  linear project create --name \"Roadmap\" --team ENG --state started --yes
+        \\  linear project create --name \"API\" --team eng --target-date 2024-12-31 --yes --json
         \\
     , .{});
 }

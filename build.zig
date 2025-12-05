@@ -294,6 +294,128 @@ pub fn build(b: *std.Build) void {
     teams_online_mod.addImport("printer", printer_mod);
     teams_online_mod.addImport("common", common_mod);
 
+    const projects_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/projects.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    projects_mod.addImport("config", config_mod);
+    projects_mod.addImport("graphql", graphql_mock_mod);
+    projects_mod.addImport("printer", printer_mod);
+    projects_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("projects_test", projects_mod);
+
+    const projects_online_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/projects.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    projects_online_mod.addImport("config", config_mod);
+    projects_online_mod.addImport("graphql", graphql_mod);
+    projects_online_mod.addImport("printer", printer_mod);
+    projects_online_mod.addImport("common", common_mod);
+
+    const project_view_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_view.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_view_mod.addImport("config", config_mod);
+    project_view_mod.addImport("graphql", graphql_mock_mod);
+    project_view_mod.addImport("printer", printer_mod);
+    project_view_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("project_view_test", project_view_mod);
+
+    const project_view_online_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_view.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_view_online_mod.addImport("config", config_mod);
+    project_view_online_mod.addImport("graphql", graphql_mod);
+    project_view_online_mod.addImport("printer", printer_mod);
+    project_view_online_mod.addImport("common", common_mod);
+
+    const project_create_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_create.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_create_mod.addImport("config", config_mod);
+    project_create_mod.addImport("graphql", graphql_mod);
+    project_create_mod.addImport("printer", printer_mod);
+    project_create_mod.addImport("common", common_mod);
+    const project_create_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_create.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_create_test_mod.addImport("config", config_mod);
+    project_create_test_mod.addImport("graphql", graphql_mock_mod);
+    project_create_test_mod.addImport("printer", printer_mod);
+    project_create_test_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("project_create_test", project_create_test_mod);
+
+    const project_update_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_update.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_update_mod.addImport("config", config_mod);
+    project_update_mod.addImport("graphql", graphql_mod);
+    project_update_mod.addImport("printer", printer_mod);
+    project_update_mod.addImport("common", common_mod);
+    const project_update_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_update.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_update_test_mod.addImport("config", config_mod);
+    project_update_test_mod.addImport("graphql", graphql_mock_mod);
+    project_update_test_mod.addImport("printer", printer_mod);
+    project_update_test_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("project_update_test", project_update_test_mod);
+
+    const project_delete_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_delete.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_delete_mod.addImport("config", config_mod);
+    project_delete_mod.addImport("graphql", graphql_mod);
+    project_delete_mod.addImport("printer", printer_mod);
+    project_delete_mod.addImport("common", common_mod);
+    const project_delete_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_delete.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_delete_test_mod.addImport("config", config_mod);
+    project_delete_test_mod.addImport("graphql", graphql_mock_mod);
+    project_delete_test_mod.addImport("printer", printer_mod);
+    project_delete_test_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("project_delete_test", project_delete_test_mod);
+
+    const project_issues_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_issues.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_issues_mod.addImport("config", config_mod);
+    project_issues_mod.addImport("graphql", graphql_mod);
+    project_issues_mod.addImport("printer", printer_mod);
+    project_issues_mod.addImport("common", common_mod);
+    const project_issues_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/project_issues.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    project_issues_test_mod.addImport("config", config_mod);
+    project_issues_test_mod.addImport("graphql", graphql_mock_mod);
+    project_issues_test_mod.addImport("printer", printer_mod);
+    project_issues_test_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("project_issues_test", project_issues_test_mod);
+
     const auth_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/auth.zig"),
         .target = target,
@@ -330,6 +452,12 @@ pub fn build(b: *std.Build) void {
     online_tests.root_module.addImport("issue_delete_cmd", issue_delete_mod);
     online_tests.root_module.addImport("me_cmd", me_online_mod);
     online_tests.root_module.addImport("gql_cmd", gql_mod);
+    online_tests.root_module.addImport("projects_cmd", projects_online_mod);
+    online_tests.root_module.addImport("project_view_cmd", project_view_online_mod);
+    online_tests.root_module.addImport("project_create_cmd", project_create_mod);
+    online_tests.root_module.addImport("project_update_cmd", project_update_mod);
+    online_tests.root_module.addImport("project_delete_cmd", project_delete_mod);
+    online_tests.root_module.addImport("project_issues_cmd", project_issues_mod);
 
     const online_step = b.step("online", "Run online tests (requires LINEAR_ONLINE_TESTS=1 and LINEAR_API_KEY)");
     const run_online = b.addRunArtifact(online_tests);

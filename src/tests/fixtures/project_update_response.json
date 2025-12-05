@@ -1,0 +1,14 @@
+{
+  "data": {
+    "projectUpdate": {
+      "success": true,
+      "project": {
+        "id": "proj_123",
+        "name": "Renamed Roadmap",
+        "slugId": "roadmap",
+        "state": "started",
+        "url": "https://linear.app/roadmap"
+      }
+    }
+  }
+}

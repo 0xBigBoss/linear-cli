@@ -1,0 +1,32 @@
+{
+  "data": {
+    "projects": {
+      "nodes": [
+        {
+          "id": "proj_123",
+          "name": "Roadmap",
+          "slugId": "roadmap",
+          "description": "Main roadmap",
+          "state": "started",
+          "startDate": "2024-01-01",
+          "targetDate": "2024-06-30",
+          "url": "https://linear.app/roadmap"
+        },
+        {
+          "id": "proj_456",
+          "name": "API revamp",
+          "slugId": "api",
+          "description": "Backend work",
+          "state": "planned",
+          "startDate": null,
+          "targetDate": null,
+          "url": "https://linear.app/api"
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": true,
+        "endCursor": "cursor-123"
+      }
+    }
+  }
+}

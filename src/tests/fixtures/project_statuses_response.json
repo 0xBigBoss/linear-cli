@@ -1,0 +1,13 @@
+{
+  "data": {
+    "projectStatuses": {
+      "nodes": [
+        { "id": "status_backlog", "type": "backlog" },
+        { "id": "status_planned", "type": "planned" },
+        { "id": "status_started", "type": "started" },
+        { "id": "status_completed", "type": "completed" },
+        { "id": "status_canceled", "type": "canceled" }
+      ]
+    }
+  }
+}

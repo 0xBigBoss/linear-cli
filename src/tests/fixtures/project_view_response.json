@@ -1,0 +1,28 @@
+{
+  "data": {
+    "project": {
+      "id": "proj_123",
+      "name": "Roadmap",
+      "slugId": "roadmap",
+      "description": "Main roadmap effort",
+      "state": "started",
+      "startDate": "2024-01-01",
+      "targetDate": "2024-06-30",
+      "url": "https://linear.app/roadmap",
+      "lead": { "name": "Ada Lovelace" },
+      "teams": {
+        "nodes": [
+          { "key": "ENG", "name": "Engineering" },
+          { "key": "DS", "name": "Data Science" }
+        ]
+      },
+      "issues": {
+        "nodes": [
+          { "identifier": "ENG-10", "title": "Kickoff" },
+          { "identifier": "ENG-20", "title": "Ship v1" }
+        ],
+        "pageInfo": { "hasNextPage": true }
+      }
+    }
+  }
+}

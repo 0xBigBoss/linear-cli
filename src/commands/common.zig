@@ -128,6 +128,166 @@ fn printRateLimit(prefix: []const u8, info: graphql.GraphqlClient.RateLimitInfo,
     try stderr.print("\n", .{});
 }
 
+pub const ResolvedId = struct {
+    value: []const u8,
+    owned: bool = false,
+};
+
+pub fn resolveProjectId(
+    allocator: Allocator,
+    client: *graphql.GraphqlClient,
+    identifier: []const u8,
+    stderr: anytype,
+    prefix: []const u8,
+) !ResolvedId {
+    if (looksLikeProjectId(identifier)) {
+        return .{ .value = identifier };
+    }
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const var_alloc = arena.allocator();
+
+    var filter = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var slug_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try slug_obj.object.put("eq", .{ .string = identifier });
+    try filter.object.put("slugId", slug_obj);
+
+    var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try variables.object.put("filter", filter);
+    try variables.object.put("first", .{ .integer = 1 });
+
+    const query =
+        \\query ProjectLookup($filter: ProjectFilter!, $first: Int!) {
+        \\  projects(filter: $filter, first: $first) {
+        \\    nodes { id }
+        \\  }
+        \\}
+    ;
+
+    var response = send(prefix, client, allocator, .{
+        .query = query,
+        .variables = variables,
+        .operation_name = "ProjectLookup",
+    }, stderr) catch {
+        return CommandError.CommandFailed;
+    };
+    defer response.deinit();
+
+    checkResponse(prefix, &response, stderr, client.api_key) catch {
+        return CommandError.CommandFailed;
+    };
+
+    const data_value = response.data() orelse {
+        try stderr.print("{s}: response missing data\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    const projects_obj = getObjectField(data_value, "projects") orelse {
+        try stderr.print("{s}: projects missing in response\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    const nodes_array = getArrayField(projects_obj, "nodes") orelse {
+        try stderr.print("{s}: nodes missing in response\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    if (nodes_array.items.len == 0) {
+        try stderr.print("{s}: project not found\n", .{prefix});
+        return CommandError.CommandFailed;
+    }
+    const node = nodes_array.items[0];
+    if (node != .object) {
+        try stderr.print("{s}: invalid project payload\n", .{prefix});
+        return CommandError.CommandFailed;
+    }
+    const id_value = getStringField(node, "id") orelse {
+        try stderr.print("{s}: project id missing in response\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+
+    const duped = allocator.dupe(u8, id_value) catch {
+        try stderr.print("{s}: failed to allocate project id\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    return .{ .value = duped, .owned = true };
+}
+
+pub fn resolveProjectStatusId(
+    allocator: Allocator,
+    client: *graphql.GraphqlClient,
+    state: []const u8,
+    stderr: anytype,
+    prefix: []const u8,
+) ![]const u8 {
+    const query =
+        \\query ProjectStatuses {
+        \\  projectStatuses { nodes { id type } }
+        \\}
+    ;
+
+    var response = send(prefix, client, allocator, .{
+        .query = query,
+        .variables = null,
+        .operation_name = "ProjectStatuses",
+    }, stderr) catch {
+        return CommandError.CommandFailed;
+    };
+    defer response.deinit();
+
+    checkResponse(prefix, &response, stderr, client.api_key) catch {
+        return CommandError.CommandFailed;
+    };
+
+    const data_value = response.data() orelse {
+        try stderr.print("{s}: response missing data\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    const statuses_obj = getObjectField(data_value, "projectStatuses") orelse {
+        try stderr.print("{s}: projectStatuses missing in response\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+    const nodes = getArrayField(statuses_obj, "nodes") orelse {
+        try stderr.print("{s}: projectStatuses nodes missing\n", .{prefix});
+        return CommandError.CommandFailed;
+    };
+
+    for (nodes.items) |node| {
+        if (node != .object) continue;
+        const type_value = getStringField(node, "type") orelse continue;
+        if (!std.ascii.eqlIgnoreCase(type_value, state)) continue;
+        const id_value = getStringField(node, "id") orelse continue;
+        const duped = allocator.dupe(u8, id_value) catch {
+            try stderr.print("{s}: failed to allocate status id\n", .{prefix});
+            return CommandError.CommandFailed;
+        };
+        return duped;
+    }
+
+    try stderr.print("{s}: project status '{s}' not found\n", .{ prefix, state });
+    return CommandError.CommandFailed;
+}
+
+pub fn isValidProjectState(value: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(value, "backlog") or
+        std.ascii.eqlIgnoreCase(value, "planned") or
+        std.ascii.eqlIgnoreCase(value, "started") or
+        std.ascii.eqlIgnoreCase(value, "paused") or
+        std.ascii.eqlIgnoreCase(value, "completed") or
+        std.ascii.eqlIgnoreCase(value, "canceled");
+}
+
+fn looksLikeProjectId(value: []const u8) bool {
+    return isUuid(value) or std.mem.startsWith(u8, value, "proj_");
+}
+
+fn isUuid(value: []const u8) bool {
+    if (value.len != 36) return false;
+    const dash_positions = [_]usize{ 8, 13, 18, 23 };
+    for (dash_positions) |idx| {
+        if (value[idx] != '-') return false;
+    }
+    return true;
+}
+
 pub fn redactKey(key: []const u8, buffer: []u8) []const u8 {
     if (buffer.len == 0 or key.len == 0) return "<redacted>";
     const head_len: usize = @min(key.len, 4);

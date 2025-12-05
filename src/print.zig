@@ -14,6 +14,10 @@ pub const TeamField = enum { id, key, name };
 pub const team_default_fields = [_]TeamField{ .id, .key, .name };
 pub const team_field_count = team_default_fields.len;
 
+pub const ProjectField = enum { id, name, slug, description, state, start_date, target_date, url };
+pub const project_default_fields = [_]ProjectField{ .id, .name, .state, .target_date };
+pub const project_field_count = std.meta.fields(ProjectField).len;
+
 pub fn printJson(value: std.json.Value, writer: *io.Writer, pretty: bool) !void {
     var jw = std.json.Stringify{
         .writer = writer,
@@ -57,6 +61,17 @@ pub const TeamRow = struct {
     id: []const u8,
     key: []const u8,
     name: []const u8,
+};
+
+pub const ProjectRow = struct {
+    id: []const u8,
+    name: []const u8,
+    slug: []const u8,
+    description: []const u8,
+    state: []const u8,
+    start_date: []const u8,
+    target_date: []const u8,
+    url: []const u8,
 };
 
 pub const UserRow = struct {
@@ -141,6 +156,39 @@ pub fn printTeamTable(allocator: std.mem.Allocator, writer: anytype, rows: []con
     try writeRow(header_row[0..selected.len], active_widths, active_caps, opts, writer);
     for (rows) |row| {
         fillTeamCells(row, selected, &cell_row);
+        try writeRow(cell_row[0..selected.len], active_widths, active_caps, opts, writer);
+    }
+}
+
+pub fn printProjectTable(allocator: std.mem.Allocator, writer: anytype, rows: []const ProjectRow, fields: []const ProjectField, opts: TableOptions) !void {
+    _ = allocator;
+    const selected = if (fields.len == 0) project_default_fields[0..] else fields;
+
+    var caps_buf: [project_field_count]usize = undefined;
+    var widths: [project_field_count]usize = undefined;
+    var header_row: [project_field_count][]const u8 = undefined;
+    var cell_row: [project_field_count][]const u8 = undefined;
+
+    for (selected, 0..) |field, idx| {
+        const cap = if (opts.truncate) projectFieldCap(field) else 0;
+        caps_buf[idx] = cap;
+        const header = projectFieldLabel(field);
+        header_row[idx] = header;
+        widths[idx] = displayWidth(header, cap);
+    }
+
+    for (rows) |row| {
+        fillProjectCells(row, selected, &cell_row);
+        for (selected, 0..) |_, idx| {
+            widths[idx] = @max(widths[idx], displayWidth(cell_row[idx], caps_buf[idx]));
+        }
+    }
+
+    const active_caps = caps_buf[0..selected.len];
+    const active_widths = widths[0..selected.len];
+    try writeRow(header_row[0..selected.len], active_widths, active_caps, opts, writer);
+    for (rows) |row| {
+        fillProjectCells(row, selected, &cell_row);
         try writeRow(cell_row[0..selected.len], active_widths, active_caps, opts, writer);
     }
 }
@@ -344,6 +392,47 @@ fn fillTeamCells(row: TeamRow, fields: []const TeamField, buffer: *[team_field_c
             .id => row.id,
             .key => row.key,
             .name => row.name,
+        };
+    }
+}
+
+fn projectFieldLabel(field: ProjectField) []const u8 {
+    return switch (field) {
+        .id => "ID",
+        .name => "Name",
+        .slug => "Slug",
+        .description => "Description",
+        .state => "State",
+        .start_date => "Start",
+        .target_date => "Target",
+        .url => "URL",
+    };
+}
+
+fn projectFieldCap(field: ProjectField) usize {
+    return switch (field) {
+        .id => 0,
+        .name => 32,
+        .slug => 20,
+        .description => 48,
+        .state => 16,
+        .start_date => 12,
+        .target_date => 12,
+        .url => 48,
+    };
+}
+
+fn fillProjectCells(row: ProjectRow, fields: []const ProjectField, buffer: *[project_field_count][]const u8) void {
+    for (fields, 0..) |field, idx| {
+        buffer[idx] = switch (field) {
+            .id => row.id,
+            .name => row.name,
+            .slug => row.slug,
+            .description => row.description,
+            .state => row.state,
+            .start_date => row.start_date,
+            .target_date => row.target_date,
+            .url => row.url,
         };
     }
 }

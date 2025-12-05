@@ -19,6 +19,12 @@ const issue_update_cmd = @import("issue_update_test");
 const issue_link_cmd = @import("issue_link_test");
 const me_cmd = @import("me_test");
 const teams_cmd = @import("teams_test");
+const projects_cmd = @import("projects_test");
+const project_view_cmd = @import("project_view_test");
+const project_create_cmd = @import("project_create_test");
+const project_update_cmd = @import("project_update_test");
+const project_delete_cmd = @import("project_delete_test");
+const project_issues_cmd = @import("project_issues_test");
 const printer = @import("printer");
 const graphql = @import("graphql");
 const mock_graphql = @import("graphql_mock");
@@ -43,6 +49,14 @@ const fixtures = struct {
     pub const issue_view_comments = @embedFile("fixtures/issue_view_comments.json");
     pub const issue_update_response = @embedFile("fixtures/issue_update_response.json");
     pub const issue_link_response = @embedFile("fixtures/issue_link_response.json");
+    pub const project_create_response = @embedFile("fixtures/project_create_response.json");
+    pub const projects_response = @embedFile("fixtures/projects_response.json");
+    pub const project_view_response = @embedFile("fixtures/project_view_response.json");
+    pub const project_update_response = @embedFile("fixtures/project_update_response.json");
+    pub const project_delete_response = @embedFile("fixtures/project_delete_response.json");
+    pub const project_add_issue_response = @embedFile("fixtures/project_add_issue_response.json");
+    pub const project_remove_issue_response = @embedFile("fixtures/project_remove_issue_response.json");
+    pub const project_statuses_response = @embedFile("fixtures/project_statuses_response.json");
 };
 
 test "config save and load roundtrip" {
@@ -428,6 +442,58 @@ test "parse issue link options duplicate" {
 test "parse issue link rejects unknown flag" {
     const args = [_][]const u8{ "ENG-123", "--unknown" };
     try std.testing.expectError(error.UnknownFlag, issue_link_cmd.parseOptions(args[0..]));
+}
+
+test "parse project create options" {
+    var args = [_][]const u8{
+        "--name",
+        "Roadmap",
+        "--team",
+        "ENG",
+        "--description",
+        "Desc",
+        "--start-date",
+        "2024-01-01",
+        "--target-date",
+        "2024-06-30",
+        "--state",
+        "started",
+        "--yes",
+        "--quiet",
+        "--data-only",
+    };
+    const opts = try project_create_cmd.parseOptions(args[0..]);
+    try std.testing.expectEqualStrings("Roadmap", opts.name.?);
+    try std.testing.expectEqualStrings("ENG", opts.team.?);
+    try std.testing.expectEqualStrings("Desc", opts.description.?);
+    try std.testing.expectEqualStrings("2024-01-01", opts.start_date.?);
+    try std.testing.expectEqualStrings("2024-06-30", opts.target_date.?);
+    try std.testing.expectEqualStrings("started", opts.state.?);
+    try std.testing.expect(opts.yes);
+    try std.testing.expect(opts.quiet);
+    try std.testing.expect(opts.data_only);
+}
+
+test "parse project update options" {
+    var args = [_][]const u8{ "proj_123", "--name", "New Name", "--description", "Updated", "--state", "started", "--yes", "--quiet", "--data-only" };
+    const opts = try project_update_cmd.parseOptions(args[0..]);
+    try std.testing.expectEqualStrings("proj_123", opts.identifier.?);
+    try std.testing.expectEqualStrings("New Name", opts.name.?);
+    try std.testing.expectEqualStrings("Updated", opts.description.?);
+    try std.testing.expectEqualStrings("started", opts.state.?);
+    try std.testing.expect(opts.yes);
+    try std.testing.expect(opts.quiet);
+    try std.testing.expect(opts.data_only);
+}
+
+test "parse project issue modification options" {
+    var args = [_][]const u8{ "proj_123", "ENG-42", "--yes", "--quiet", "--data-only" };
+    const opts = try project_issues_cmd.parseOptions(args[0..]);
+    try std.testing.expectEqualStrings("proj_123", opts.project_id.?);
+    try std.testing.expectEqualStrings("ENG-42", opts.issue_id.?);
+    try std.testing.expect(opts.yes);
+    try std.testing.expect(opts.quiet);
+    try std.testing.expect(opts.data_only);
 }
 
 test "global flags parsed after subcommand" {
@@ -2896,6 +2962,596 @@ test "issue view includes comments with limit" {
     if (body_field != .string) return error.TestExpectedResult;
     try std.testing.expectEqualStrings("First comment body", body_field.string);
     try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "comments limited") != null);
+}
+
+test "project create uses teamIds array" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
+    try server.set("ProjectCreate", fixtures.project_create_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runCreate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "--name", "New Project", "--team", "ENG", "--yes" };
+            return project_create_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runCreate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("ProjectCreate", recorded.operation);
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const input = vars.object.get("input") orelse return error.TestExpectedResult;
+    if (input != .object) return error.TestExpectedResult;
+    const team_ids = input.object.get("teamIds") orelse return error.TestExpectedResult;
+    if (team_ids != .array) return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), team_ids.array.items.len);
+    const first = team_ids.array.items[0];
+    if (first != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("team-id-123", first.string);
+    try std.testing.expect(input.object.get("teamId") == null);
+}
+
+test "project create requires confirmation" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runCreate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "--name", "New Project", "--team", "ENG" };
+            return project_create_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runCreate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "confirmation required") != null);
+}
+
+test "projects list renders rows and warns about pagination" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("Projects", fixtures.projects_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runProjects = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{};
+            return projects_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runProjects);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "Roadmap") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "API revamp") != null);
+    try std.testing.expectEqualStrings("projects list: more projects available; pagination not implemented (endCursor cursor-123)\n", capture.stderr);
+}
+
+test "projects list maps state filter to status id" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("ProjectStatuses", fixtures.project_statuses_response);
+    try server.set("Projects", fixtures.projects_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runProjects = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "--state", "started" };
+            return projects_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runProjects);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("Projects", recorded.operation);
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const filter = vars.object.get("filter") orelse return error.TestExpectedResult;
+    if (filter != .object) return error.TestExpectedResult;
+    const status_filter = filter.object.get("statusId") orelse return error.TestExpectedResult;
+    if (status_filter != .object) return error.TestExpectedResult;
+    const eq_value = status_filter.object.get("eq") orelse return error.TestExpectedResult;
+    if (eq_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("status_started", eq_value.string);
+    try std.testing.expect(filter.object.get("state") == null);
+}
+
+test "project view prints teams and truncated issues warning" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("ProjectView", fixtures.project_view_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runView = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "proj_123", "--fields", "name,teams,issues", "--issue-limit", "1" };
+            return project_view_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runView);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "Roadmap") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "ENG (Engineering), DS (Data Science)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "ENG-10 Kickoff, ENG-20 Ship v1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "issues limited to 1") != null);
+}
+
+test "project update requires at least one field" {
+    const allocator = std.testing.allocator;
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{"proj_123"};
+            return project_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "at least one field") != null);
+}
+
+test "project update quiet output and payload" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("ProjectStatuses", fixtures.project_statuses_response);
+    try server.set("ProjectUpdate", fixtures.project_update_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "proj_123", "--name", "Renamed Roadmap", "--state", "started", "--yes", "--quiet" };
+            return project_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings("roadmap\n", capture.stdout);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const input = vars.object.get("input") orelse return error.TestExpectedResult;
+    if (input != .object) return error.TestExpectedResult;
+    const name_value = input.object.get("name") orelse return error.TestExpectedResult;
+    if (name_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("Renamed Roadmap", name_value.string);
+    const status_id_value = input.object.get("statusId") orelse return error.TestExpectedResult;
+    if (status_id_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("status_started", status_id_value.string);
+    try std.testing.expect(input.object.get("description") == null);
+}
+
+test "project delete requires confirmation" {
+    const allocator = std.testing.allocator;
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runDelete = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{"proj_123"};
+            return project_delete_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runDelete);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "confirmation required") != null);
+}
+
+test "project delete prints archive message" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("ProjectDelete", fixtures.project_delete_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runDelete = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "proj_123", "--yes" };
+            return project_delete_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runDelete);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings("project delete: archived proj_123\n", capture.stdout);
+}
+
+test "project add-issue sets project id" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueUpdate", fixtures.project_add_issue_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runAdd = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "add-issue", "proj_123", "ENG-42", "--yes" };
+            return project_issues_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runAdd);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "Roadmap") != null);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const input = vars.object.get("input") orelse return error.TestExpectedResult;
+    if (input != .object) return error.TestExpectedResult;
+    const project_value = input.object.get("projectId") orelse return error.TestExpectedResult;
+    if (project_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("proj_123", project_value.string);
+}
+
+test "project remove-issue clears project id" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueUpdate", fixtures.project_remove_issue_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runRemove = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "remove-issue", "proj_123", "ENG-42", "--yes", "--data-only" };
+            return project_issues_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = true,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runRemove);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "\"project\": \"proj_123\"") != null);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const input = vars.object.get("input") orelse return error.TestExpectedResult;
+    if (input != .object) return error.TestExpectedResult;
+    const project_value = input.object.get("projectId") orelse return error.TestExpectedResult;
+    try std.testing.expect(project_value == .null);
+}
+
+test "issue create sets projectId when provided" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueCreate", fixtures.issue_create_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runCreate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{
+                "--team",
+                "123e4567-e89b-12d3-a456-426614174000",
+                "--title",
+                "Example created issue",
+                "--project",
+                "proj_123",
+                "--yes",
+            };
+            return issue_create_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runCreate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const input = vars.object.get("input") orelse return error.TestExpectedResult;
+    if (input != .object) return error.TestExpectedResult;
+    const project_value = input.object.get("projectId") orelse return error.TestExpectedResult;
+    if (project_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("proj_123", project_value.string);
+}
+
+test "issue update sets projectId when provided" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueUpdate", fixtures.issue_update_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--project", "proj_123", "--yes", "--quiet" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const input = vars.object.get("input") orelse return error.TestExpectedResult;
+    if (input != .object) return error.TestExpectedResult;
+    const project_value = input.object.get("projectId") orelse return error.TestExpectedResult;
+    if (project_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("proj_123", project_value.string);
 }
 
 test "graphql client reuses shared http client across instances" {

@@ -2,6 +2,7 @@ const std = @import("std");
 const posix = std.posix;
 const config = @import("config");
 const graphql = @import("graphql");
+const common = @import("common");
 const auth_cmd = @import("auth");
 const teams_cmd = @import("teams_cmd");
 const issues_cmd = @import("issues_cmd");
@@ -53,6 +54,7 @@ fn loadEnv(allocator: Allocator) Env {
     env.issue_id = std.process.getEnvVarOwned(allocator, "LINEAR_TEST_ISSUE_ID") catch null;
     env.project_id = std.process.getEnvVarOwned(allocator, "LINEAR_TEST_PROJECT_ID") catch null;
     env.milestone_id = std.process.getEnvVarOwned(allocator, "LINEAR_TEST_MILESTONE_ID") catch null;
+    ensureTeamId(&env, allocator);
     return env;
 }
 
@@ -86,6 +88,56 @@ fn readAll(allocator: Allocator, fd: posix.fd_t) ![]u8 {
     }
 
     return buffer.toOwnedSlice(allocator);
+}
+
+fn ensureTeamId(env: *Env, allocator: Allocator) void {
+    if (!env.enabled or env.team_id != null or env.api_key == null) return;
+    env.team_id = fetchDefaultTeamId(allocator, env.api_key.?) catch null;
+}
+
+fn fetchDefaultTeamId(allocator: Allocator, api_key: []const u8) !?[]u8 {
+    var stderr_buf: [0]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+    const stderr = &stderr_writer.interface;
+
+    var client = graphql.GraphqlClient.init(allocator, api_key);
+    defer graphql.deinitSharedClient();
+    defer client.deinit();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const var_alloc = arena.allocator();
+
+    const query =
+        \\query DefaultTeam($first: Int!) {
+        \\  teams(first: $first) { nodes { id } }
+        \\}
+    ;
+
+    var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try variables.object.put("first", .{ .integer = 1 });
+
+    var response = common.send("online setup", &client, allocator, .{
+        .query = query,
+        .variables = variables,
+        .operation_name = "DefaultTeam",
+    }, stderr) catch {
+        return null;
+    };
+    defer response.deinit();
+
+    common.checkResponse("online setup", &response, stderr, api_key) catch {
+        return null;
+    };
+
+    const data_value = response.data() orelse return null;
+    const teams_obj = common.getObjectField(data_value, "teams") orelse return null;
+    const nodes = common.getArrayField(teams_obj, "nodes") orelse return null;
+    if (nodes.items.len == 0) return null;
+    const node = nodes.items[0];
+    if (node != .object) return null;
+    const id_value = common.getStringField(node, "id") orelse return null;
+    const duped = try allocator.dupe(u8, id_value);
+    return duped;
 }
 
 fn captureOutput(allocator: Allocator, context: anytype, run_fn: anytype) !Capture {
