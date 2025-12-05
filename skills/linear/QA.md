@@ -60,6 +60,7 @@ Note: The skill includes references to additional files (graphql-recipes.md, tro
 ### Phase 1: Quick Recipes (SKILL.md)
 Test each recipe exactly as documented:
 - [ ] `linear issues list --team TEAM_KEY --human-time`
+- [ ] `linear search "keyword" --team TEAM_KEY --limit 5`
 - [ ] `linear issue create --team TEAM_KEY --title "QA Test" --yes`
 - [ ] `linear issue view IDENTIFIER`
 - [ ] `linear issue view IDENTIFIER --json`
@@ -69,6 +70,7 @@ Test each recipe exactly as documented:
 ### Phase 2: Command Reference Table
 Verify each command in the table works:
 - [ ] `linear issues list`
+- [ ] `linear search "keyword"`
 - [ ] `linear issue view ID`
 - [ ] `linear issue create` (with required flags)
 - [ ] `linear issue update ID` (with at least one field)
@@ -85,6 +87,14 @@ Verify each command in the table works:
 - [ ] `--human-time` shows relative times
 - [ ] `--fields LIST` filters output
 - [ ] `--help` shows usage
+
+### Phase 3b: Search Command Coverage
+- [ ] `linear search "keyword" --team TEAM_KEY --limit 5` (table output)
+- [ ] `linear search "keyword" --team TEAM_KEY --json --limit 2` (JSON + pagination warning when hasNextPage)
+- [ ] `linear search IDENTIFIER --fields identifier --team TEAM_KEY` (identifier search resolves numbers)
+- [ ] `linear search "Keyword" --case-sensitive --team TEAM_KEY` vs lowercase query (case sensitivity respected)
+- [ ] `linear search "keyword" --fields title,description,comments --team TEAM_KEY` (field selection honored)
+- [ ] `linear search "keyword" --assignee me --team TEAM_KEY` (assignee resolution works or returns empty set gracefully)
 
 ### Phase 4: Common Gotchas Table
 Verify each error scenario:

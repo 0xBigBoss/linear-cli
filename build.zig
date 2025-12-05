@@ -131,6 +131,26 @@ pub fn build(b: *std.Build) void {
     issues_test_mod.addImport("common", common_test_mod);
     tests_mod.addImport("issues_test", issues_test_mod);
 
+    const search_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/search.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    search_mod.addImport("config", config_mod);
+    search_mod.addImport("graphql", graphql_mod);
+    search_mod.addImport("printer", printer_mod);
+    search_mod.addImport("common", common_mod);
+    const search_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/search.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    search_test_mod.addImport("config", config_mod);
+    search_test_mod.addImport("graphql", graphql_mock_mod);
+    search_test_mod.addImport("printer", printer_mod);
+    search_test_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("search_test", search_test_mod);
+
     const issue_create_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/issue_create.zig"),
         .target = target,
@@ -304,6 +324,7 @@ pub fn build(b: *std.Build) void {
     online_tests.root_module.addImport("auth", auth_mod);
     online_tests.root_module.addImport("teams_cmd", teams_online_mod);
     online_tests.root_module.addImport("issues_cmd", issues_mod);
+    online_tests.root_module.addImport("search_cmd", search_mod);
     online_tests.root_module.addImport("issue_view_cmd", issue_view_online_mod);
     online_tests.root_module.addImport("issue_create_cmd", issue_create_mod);
     online_tests.root_module.addImport("issue_delete_cmd", issue_delete_mod);

@@ -6,6 +6,29 @@ Single-binary Linear client built with Zig 0.15.2. Uses stdlib only, defaults to
 - Build: `zig build -Drelease-safe` (debug is default). Binary installs to `zig-out/bin/linear`.
 - Tests: `zig build test`. Online suite runs with `LINEAR_ONLINE_TESTS=1`: `LINEAR_ONLINE_TESTS=1 LINEAR_TEST_TEAM_ID=<TEAM_ID> zig build online` (requires `LINEAR_API_KEY`; optional `LINEAR_TEST_ISSUE_ID`, `LINEAR_TEST_PROJECT_ID`, `LINEAR_TEST_MILESTONE_ID`; opt-in mutations with `LINEAR_TEST_ALLOW_MUTATIONS=1`).
 
+## Manual QA (Live API)
+- Quick start (uses a temp config): 
+  ```
+  export LINEAR_API_KEY=<paste key>
+  export LINEAR_ONLINE_TESTS=1
+  export LINEAR_TEST_TEAM_ID=<team-id>
+  # Optional for broader coverage:
+  # export LINEAR_TEST_ISSUE_ID=<identifier like ENG-123>
+  # export LINEAR_TEST_PROJECT_ID=<project id>
+  # export LINEAR_TEST_MILESTONE_ID=<milestone id>
+  # export LINEAR_TEST_ALLOW_MUTATIONS=1  # enables create/delete tests
+  rm -f /tmp/linear-cli-qa.json
+  echo "$LINEAR_API_KEY" | ./zig-out/bin/linear --config /tmp/linear-cli-qa.json auth set
+  ./zig-out/bin/linear --config /tmp/linear-cli-qa.json auth test
+  zig build test
+  LINEAR_ONLINE_TESTS=1 LINEAR_TEST_TEAM_ID=$LINEAR_TEST_TEAM_ID zig build online
+  ```
+- Finding IDs quickly:
+  - Team: `./zig-out/bin/linear --config /tmp/linear-cli-qa.json teams list --json | jq -r '.nodes[0].id'`
+  - Issue identifier: `./zig-out/bin/linear --config /tmp/linear-cli-qa.json issues list --limit 1 --quiet`
+  - Project/milestone: `./zig-out/bin/linear --config /tmp/linear-cli-qa.json issues list --include-projects --fields project,milestone --limit 1 --json`
+  - If no suitable issue exists and mutations are allowed: `LINEAR_TEST_ALLOW_MUTATIONS=1 ./zig-out/bin/linear --config /tmp/linear-cli-qa.json issue create --team <TEAM_KEY_OR_ID> --title "CLI QA seed" --quiet`
+
 ## Config & Auth
 - Config path: `~/.config/linear/config.json` (override with `--config PATH` or env `LINEAR_CONFIG`).
 - Precedence: CLI flags > env (`LINEAR_API_KEY`) > config file. Keys loaded from env are not written back to disk.
@@ -34,6 +57,7 @@ Commands:
 - `auth show [--redacted]` — view the configured key (masked when requested).
 - `me` — show current user.
 - `teams list [--fields id,key,name] [--plain] [--no-truncate]` — list teams with optional column and formatting controls.
+- `search <query> [--team ID|KEY] [--fields title,description,comments,identifier] [--state-type TYPES] [--assignee USER_ID|me] [--limit N] [--case-sensitive]` — server-side search over titles/descriptions/comments or identifiers (identifier filter matches issue numbers; pagination warns when more results remain).
 - `issues list [--team ID|KEY] [--state TYPES] [--created-since TS] [--updated-since TS] [--project ID] [--milestone ID] [--limit N] [--max-items N] [--sub-limit N] [--cursor CURSOR] [--pages N|--all] [--fields ...] [--include-projects] [--plain] [--no-truncate] [--human-time]` — defaults to the config team; excludes completed/canceled unless `--state` is provided; project/milestone filters available; parent/sub-issue columns stay opt-in and can be disabled entirely via `--sub-limit 0`; `--include-projects` (or fields) adds project/milestone context; `--max-items` stops mid-page when needed; paginates with cursor support plus page summaries.
 - `issue view <ID|IDENTIFIER> [--fields LIST] [--quiet] [--data-only] [--human-time] [--sub-limit N]` — show a single issue; `--fields` filters output (identifier,title,state,assignee,priority,url,created_at,updated_at,description,project,milestone,parent,sub_issues); `--sub-limit` controls sub-issue expansion when requested; `--quiet` prints only the identifier, `--data-only` emits tab-separated fields or JSON.
 - `issue create --team ID|KEY --title TITLE [--description TEXT] [--priority N] [--state STATE_ID] [--assignee USER_ID] [--labels ID,ID] [--yes] [--quiet] [--data-only]` — resolves team key to id when needed, caches lookups, and returns identifier/url; requires `--yes`/`--force` to proceed (otherwise exits with a message).

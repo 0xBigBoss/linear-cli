@@ -14,6 +14,7 @@ const issue_create_command = @import("commands/issue_create.zig");
 const issue_delete_command = @import("commands/issue_delete.zig");
 const issue_update_command = @import("commands/issue_update.zig");
 const issue_link_command = @import("commands/issue_link.zig");
+const search_command = @import("commands/search.zig");
 
 const version_string = build_options.version;
 const GlobalOptions = cli.GlobalOptions;
@@ -145,6 +146,18 @@ fn run() !u8 {
 
     if (std.mem.eql(u8, subcommand, "me")) {
         return me_command.run(.{
+            .allocator = allocator,
+            .config = &cfg,
+            .args = sub_args,
+            .json_output = json_output,
+            .retries = opts.retries,
+            .timeout_ms = opts.timeout_ms,
+            .endpoint = opts.endpoint,
+        });
+    }
+
+    if (std.mem.eql(u8, subcommand, "search")) {
+        return search_command.run(.{
             .allocator = allocator,
             .config = &cfg,
             .args = sub_args,
@@ -310,6 +323,11 @@ fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
         return 0;
     }
 
+    if (std.mem.eql(u8, target, "search")) {
+        try search_command.usage(out);
+        return 0;
+    }
+
     if (std.mem.eql(u8, target, "issue")) {
         if (tail.len > 0) {
             if (std.mem.eql(u8, tail[0], "view")) {
@@ -362,6 +380,7 @@ fn printUsage(writer: anytype) !void {
         \\  auth set|test|show   Manage or validate authentication
         \\  me                   Show current user
         \\  teams list           List teams
+        \\  search               Search issues by keyword
         \\  issues list          List issues
         \\  issue view|create|update|delete|link  Manage issues
         \\  gql                  Run an arbitrary GraphQL query against Linear

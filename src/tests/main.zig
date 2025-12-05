@@ -11,6 +11,7 @@ const config = @import("config");
 const cli = @import("cli");
 const gql = @import("gql");
 const issues_cmd = @import("issues_test");
+const search_cmd = @import("search_test");
 const issue_create_cmd = @import("issue_create_test");
 const issue_view_cmd = @import("issue_view_test");
 const issue_delete_cmd = @import("issue_delete_test");
@@ -269,6 +270,41 @@ test "parse gql options" {
     try std.testing.expect(opts.vars_json != null);
     try std.testing.expect(opts.data_only);
     try std.testing.expectEqualStrings("data", opts.fields.?);
+}
+
+test "parse search options" {
+    const args = [_][]const u8{
+        "agent",
+        "--team",
+        "ENG",
+        "--fields",
+        "title,comments,identifier",
+        "--state-type",
+        "backlog,started",
+        "--assignee",
+        "user-1",
+        "--limit",
+        "10",
+        "--case-sensitive",
+    };
+    const opts = try search_cmd.parseOptions(args[0..]);
+    try std.testing.expectEqualStrings("agent", opts.query.?);
+    try std.testing.expectEqualStrings("ENG", opts.team.?);
+    try std.testing.expectEqualStrings("title,comments,identifier", opts.fields.?);
+    try std.testing.expectEqualStrings("backlog,started", opts.state_type.?);
+    try std.testing.expectEqualStrings("user-1", opts.assignee.?);
+    try std.testing.expectEqual(@as(usize, 10), opts.limit);
+    try std.testing.expect(opts.case_sensitive);
+}
+
+test "parse search rejects zero limit" {
+    const args = [_][]const u8{ "query", "--limit", "0" };
+    try std.testing.expectError(error.InvalidLimit, search_cmd.parseOptions(args[0..]));
+}
+
+test "parse search unknown flag errors" {
+    const args = [_][]const u8{ "query", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, search_cmd.parseOptions(args[0..]));
 }
 
 test "parse issues options" {
@@ -817,6 +853,245 @@ fn readAll(allocator: std.mem.Allocator, fd: posix.fd_t) ![]u8 {
     }
 
     return buffer.toOwnedSlice(allocator);
+}
+
+test "search renders table and warns about pagination with mock graphql" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("SearchIssues", fixtures.issues_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runSearch = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{"offline"};
+            return search_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .json_output = false,
+                .retries = 0,
+                .timeout_ms = 10_000,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runSearch);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings(fixtures.issues_table, capture.stdout);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "pagination not implemented") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "cursor-2") != null);
+}
+
+test "search builds filters for selected fields" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("Viewer", fixtures.viewer_response);
+    try server.set("SearchIssues", fixtures.issues_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runSearch = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{
+                "Agent",
+                "--team",
+                "TEAM",
+                "--fields",
+                "title,comments,identifier",
+                "--state-type",
+                "backlog,started",
+                "--assignee",
+                "me",
+                "--limit",
+                "3",
+                "--case-sensitive",
+            };
+            return search_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .json_output = true,
+                .retries = 0,
+                .timeout_ms = 10_000,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runSearch);
+    defer capture.deinit(allocator);
+    if (capture.exit_code != 0) {
+        std.debug.print("search stdout: {s}\nstderr: {s}\n", .{ capture.stdout, capture.stderr });
+    }
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("SearchIssues", recorded.operation);
+
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const root = parsed.value;
+    if (root != .object) return error.TestExpectedResult;
+
+    const first_value = root.object.get("first") orelse return error.TestExpectedResult;
+    if (first_value != .integer) return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(i64, 3), first_value.integer);
+
+    const filter = root.object.get("filter") orelse return error.TestExpectedResult;
+    if (filter != .object) return error.TestExpectedResult;
+
+    const or_value = filter.object.get("or") orelse return error.TestExpectedResult;
+    if (or_value != .array) return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(usize, 3), or_value.array.items.len);
+
+    const title_entry = or_value.array.items[0];
+    if (title_entry != .object) return error.TestExpectedResult;
+    const title_filter = title_entry.object.get("title") orelse return error.TestExpectedResult;
+    if (title_filter != .object) return error.TestExpectedResult;
+    const contains_title = title_filter.object.get("contains") orelse return error.TestExpectedResult;
+    if (contains_title != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("Agent", contains_title.string);
+    try std.testing.expect(title_filter.object.get("containsIgnoreCase") == null);
+
+    const comments_entry = or_value.array.items[1];
+    if (comments_entry != .object) return error.TestExpectedResult;
+    const comments_filter = comments_entry.object.get("comments") orelse return error.TestExpectedResult;
+    if (comments_filter != .object) return error.TestExpectedResult;
+    const some_filter = comments_filter.object.get("some") orelse return error.TestExpectedResult;
+    if (some_filter != .object) return error.TestExpectedResult;
+    const body_filter = some_filter.object.get("body") orelse return error.TestExpectedResult;
+    if (body_filter != .object) return error.TestExpectedResult;
+    const body_contains = body_filter.object.get("contains") orelse return error.TestExpectedResult;
+    if (body_contains != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("Agent", body_contains.string);
+
+    const identifier_entry = or_value.array.items[2];
+    if (identifier_entry != .object) return error.TestExpectedResult;
+    const identifier_filter = identifier_entry.object.get("searchableContent") orelse return error.TestExpectedResult;
+    if (identifier_filter != .object) return error.TestExpectedResult;
+    const identifier_contains = identifier_filter.object.get("contains") orelse return error.TestExpectedResult;
+    if (identifier_contains != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("Agent", identifier_contains.string);
+
+    const state_filter = filter.object.get("state") orelse return error.TestExpectedResult;
+    if (state_filter != .object) return error.TestExpectedResult;
+    const type_filter = state_filter.object.get("type") orelse return error.TestExpectedResult;
+    if (type_filter != .object) return error.TestExpectedResult;
+    const in_filter = type_filter.object.get("in") orelse return error.TestExpectedResult;
+    if (in_filter != .array) return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(usize, 2), in_filter.array.items.len);
+    if (in_filter.array.items[0] != .string) return error.TestExpectedResult;
+    if (in_filter.array.items[1] != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("backlog", in_filter.array.items[0].string);
+    try std.testing.expectEqualStrings("started", in_filter.array.items[1].string);
+
+    const assignee_filter = filter.object.get("assignee") orelse return error.TestExpectedResult;
+    if (assignee_filter != .object) return error.TestExpectedResult;
+    const assignee_id = assignee_filter.object.get("id") orelse return error.TestExpectedResult;
+    if (assignee_id != .object) return error.TestExpectedResult;
+    const eq_assignee = assignee_id.object.get("eq") orelse return error.TestExpectedResult;
+    if (eq_assignee != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("user-1", eq_assignee.string);
+
+    const team_filter = filter.object.get("team") orelse return error.TestExpectedResult;
+    if (team_filter != .object) return error.TestExpectedResult;
+    const team_key = team_filter.object.get("key") orelse return error.TestExpectedResult;
+    if (team_key != .object) return error.TestExpectedResult;
+    const team_eq = team_key.object.get("eq") orelse return error.TestExpectedResult;
+    if (team_eq != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("TEAM", team_eq.string);
+}
+
+test "search identifier uses case-insensitive comparator by default" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("SearchIssues", fixtures.issues_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runSearch = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{
+                "Agent",
+                "--fields",
+                "identifier",
+            };
+            return search_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .json_output = true,
+                .retries = 0,
+                .timeout_ms = 10_000,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runSearch);
+    defer capture.deinit(allocator);
+    if (capture.exit_code != 0) {
+        std.debug.print("search stdout: {s}\nstderr: {s}\n", .{ capture.stdout, capture.stderr });
+    }
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("SearchIssues", recorded.operation);
+
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const root = parsed.value;
+    if (root != .object) return error.TestExpectedResult;
+
+    const filter = root.object.get("filter") orelse return error.TestExpectedResult;
+    if (filter != .object) return error.TestExpectedResult;
+
+    const or_value = filter.object.get("or") orelse return error.TestExpectedResult;
+    if (or_value != .array) return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), or_value.array.items.len);
+
+    const identifier_entry = or_value.array.items[0];
+    if (identifier_entry != .object) return error.TestExpectedResult;
+    const identifier_filter = identifier_entry.object.get("searchableContent") orelse return error.TestExpectedResult;
+    if (identifier_filter != .object) return error.TestExpectedResult;
+
+    const identifier_contains_ci = identifier_filter.object.get("containsIgnoreCase") orelse return error.TestExpectedResult;
+    if (identifier_contains_ci != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("Agent", identifier_contains_ci.string);
+    try std.testing.expect(identifier_filter.object.get("contains") == null);
 }
 
 test "issues list renders table and warns about pagination with mock graphql" {
