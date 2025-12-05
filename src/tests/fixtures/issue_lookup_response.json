@@ -1,0 +1,9 @@
+{
+  "data": {
+    "issues": {
+      "nodes": [
+        { "id": "issue-1" }
+      ]
+    }
+  }
+}
