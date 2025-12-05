@@ -124,13 +124,18 @@ pub fn run(ctx: Context) !u8 {
         } else {
             try team_obj.object.put("key", eq_obj);
         }
-        try filter.object.put("team", team_obj);
+        var teams_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+        try teams_obj.object.put("some", team_obj);
+        try filter.object.put("accessibleTeams", teams_obj);
         has_filter = true;
     }
     if (status_id) |sid| {
+        var id_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+        try id_obj.object.put("eq", .{ .string = sid });
+
         var status_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
-        try status_obj.object.put("eq", .{ .string = sid });
-        try filter.object.put("statusId", status_obj);
+        try status_obj.object.put("id", id_obj);
+        try filter.object.put("status", status_obj);
         has_filter = true;
     }
     if (has_filter) {

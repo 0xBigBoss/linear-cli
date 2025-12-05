@@ -28,6 +28,11 @@ Interacts with Linear for issue tracking and project management using the `linea
 linear issues list --team TEAM_KEY --human-time
 ```
 
+### Search issues
+```bash
+linear search "keyword" --team TEAM_KEY --limit 10
+```
+
 ### Create an issue
 ```bash
 linear issue create --team TEAM_KEY --title "Fix bug" --yes
@@ -59,16 +64,41 @@ linear teams list
 linear auth test
 ```
 
+### List projects
+```bash
+linear projects list --limit 10
+```
+
+### Create and manage a project
+```bash
+# Create project (team UUID required)
+linear project create --team TEAM_UUID --name "My Project" --state planned --yes
+
+# Update project state
+linear project update PROJECT_ID --state started --yes
+
+# Add issue to project
+linear project add-issue PROJECT_ID ISSUE_UUID --yes
+```
+
 ## Command Reference
 
 | Command | Purpose |
 |---------|---------|
 | `linear issues list` | List issues with filters |
+| `linear search "keyword"` | Search issues by text |
 | `linear issue view ID` | View single issue |
 | `linear issue create` | Create new issue |
 | `linear issue update ID` | Update issue (assign, state, priority, parent*) |
 | `linear issue link UUID` | Link issues (blocks, related, duplicate)* |
 | `linear issue delete ID` | Archive an issue |
+| `linear projects list` | List projects |
+| `linear project view ID` | View project details |
+| `linear project create` | Create new project |
+| `linear project update ID` | Update project (state, name, dates) |
+| `linear project delete ID` | Archive a project |
+| `linear project add-issue` | Add issue to project |
+| `linear project remove-issue` | Remove issue from project |
 | `linear teams list` | List available teams |
 | `linear me` | Show current user |
 | `linear gql` | Run raw GraphQL |

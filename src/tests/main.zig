@@ -3143,12 +3143,72 @@ test "projects list maps state filter to status id" {
     if (vars != .object) return error.TestExpectedResult;
     const filter = vars.object.get("filter") orelse return error.TestExpectedResult;
     if (filter != .object) return error.TestExpectedResult;
-    const status_filter = filter.object.get("statusId") orelse return error.TestExpectedResult;
+    const status_filter = filter.object.get("status") orelse return error.TestExpectedResult;
     if (status_filter != .object) return error.TestExpectedResult;
-    const eq_value = status_filter.object.get("eq") orelse return error.TestExpectedResult;
+    const id_filter = status_filter.object.get("id") orelse return error.TestExpectedResult;
+    if (id_filter != .object) return error.TestExpectedResult;
+    const eq_value = id_filter.object.get("eq") orelse return error.TestExpectedResult;
     if (eq_value != .string) return error.TestExpectedResult;
     try std.testing.expectEqualStrings("status_started", eq_value.string);
+    try std.testing.expect(filter.object.get("statusId") == null);
     try std.testing.expect(filter.object.get("state") == null);
+}
+
+test "projects list maps team filter to accessibleTeams some filter" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("Projects", fixtures.projects_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runProjects = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "--team", "ENG" };
+            return projects_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runProjects);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("Projects", recorded.operation);
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const filter = vars.object.get("filter") orelse return error.TestExpectedResult;
+    if (filter != .object) return error.TestExpectedResult;
+    const teams_filter = filter.object.get("accessibleTeams") orelse return error.TestExpectedResult;
+    if (teams_filter != .object) return error.TestExpectedResult;
+    const some_filter = teams_filter.object.get("some") orelse return error.TestExpectedResult;
+    if (some_filter != .object) return error.TestExpectedResult;
+    const key_filter = some_filter.object.get("key") orelse return error.TestExpectedResult;
+    if (key_filter != .object) return error.TestExpectedResult;
+    const eq_value = key_filter.object.get("eq") orelse return error.TestExpectedResult;
+    if (eq_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("ENG", eq_value.string);
+    try std.testing.expect(filter.object.get("team") == null);
 }
 
 test "project view prints teams and truncated issues warning" {
