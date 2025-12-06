@@ -48,6 +48,7 @@ const fixtures = struct {
     pub const issue_view_relations = @embedFile("fixtures/issue_view_relations.json");
     pub const issue_view_comments = @embedFile("fixtures/issue_view_comments.json");
     pub const issue_update_response = @embedFile("fixtures/issue_update_response.json");
+    pub const issue_lookup_response = @embedFile("fixtures/issue_lookup_response.json");
     pub const issue_link_response = @embedFile("fixtures/issue_link_response.json");
     pub const project_create_response = @embedFile("fixtures/project_create_response.json");
     pub const projects_response = @embedFile("fixtures/projects_response.json");
@@ -1580,6 +1581,67 @@ test "issues list applies created-since and project filters" {
     try std.testing.expectEqualStrings("proj-123", eq_value.string);
 }
 
+test "issues list resolves assignee me before applying filter" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.setSequence("Viewer", &.{ fixtures.viewer_response, fixtures.viewer_response });
+    try server.set("Issues", fixtures.issues_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runIssues = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "--assignee", " me ", "--limit", "1" };
+            return issues_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = true,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runIssues);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const viewer_series = server.fixtures.getPtr("Viewer") orelse return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), viewer_series.*.next);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("Issues", recorded.operation);
+
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars_root = parsed.value;
+    if (vars_root != .object) return error.TestExpectedResult;
+
+    const filter = vars_root.object.get("filter") orelse return error.TestExpectedResult;
+    if (filter != .object) return error.TestExpectedResult;
+
+    const assignee = filter.object.get("assignee") orelse return error.TestExpectedResult;
+    if (assignee != .object) return error.TestExpectedResult;
+    const id_obj = assignee.object.get("id") orelse return error.TestExpectedResult;
+    if (id_obj != .object) return error.TestExpectedResult;
+    const eq_value = id_obj.object.get("eq") orelse return error.TestExpectedResult;
+    if (eq_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("user-1", eq_value.string);
+}
+
 test "issues list warns when sub-issues are truncated" {
     const allocator = std.testing.allocator;
 
@@ -2405,6 +2467,7 @@ test "issue link succeeds with quiet output" {
     defer server.deinit();
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
+    try server.set("IssueLookup", fixtures.issue_lookup_response);
     try server.set("IssueRelationCreate", fixtures.issue_link_response);
 
     var cfg = try makeTestConfig(allocator);
@@ -2540,6 +2603,7 @@ test "issue link data-only json output" {
     defer server.deinit();
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
+    try server.set("IssueLookup", fixtures.issue_lookup_response);
     try server.set("IssueRelationCreate", fixtures.issue_link_response);
 
     var cfg = try makeTestConfig(allocator);
@@ -2590,6 +2654,7 @@ test "issue link reports user error" {
     defer server.deinit();
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
+    try server.set("IssueLookup", fixtures.issue_lookup_response);
     try server.set("IssueRelationCreate", user_error);
 
     var cfg = try makeTestConfig(allocator);
@@ -2619,6 +2684,140 @@ test "issue link reports user error" {
 
     try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "relation already exists") != null);
+}
+
+test "issue link lookup trims identifiers and accepts direct target ids" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.setSequence("IssueLookup", &.{ fixtures.issue_lookup_response, fixtures.issue_lookup_response, fixtures.issue_lookup_response });
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runLink = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ " ENG-123 ", "--related", "iss_target_123", "--yes" };
+            return issue_link_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runLink);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "invalid issue identifier") == null);
+
+    const lookup_series = server.fixtures.getPtr("IssueLookup") orelse return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), lookup_series.*.next);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("IssueLookup", recorded.operation);
+
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const root = parsed.value;
+    if (root != .object) return error.TestExpectedResult;
+
+    const filter = root.object.get("filter") orelse return error.TestExpectedResult;
+    if (filter != .object) return error.TestExpectedResult;
+
+    const team_obj = filter.object.get("team") orelse return error.TestExpectedResult;
+    if (team_obj != .object) return error.TestExpectedResult;
+    const key_obj = team_obj.object.get("key") orelse return error.TestExpectedResult;
+    if (key_obj != .object) return error.TestExpectedResult;
+    const eq_key = key_obj.object.get("eq") orelse return error.TestExpectedResult;
+    if (eq_key != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("ENG", eq_key.string);
+
+    const number_obj = filter.object.get("number") orelse return error.TestExpectedResult;
+    if (number_obj != .object) return error.TestExpectedResult;
+    const eq_number = number_obj.object.get("eq") orelse return error.TestExpectedResult;
+    if (eq_number != .integer) return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(i64, 123), eq_number.integer);
+}
+
+test "issue link lookup validates target payload and accepts cuid ids" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.setSequence("IssueLookup", &.{ fixtures.issue_lookup_response, fixtures.issue_lookup_response, fixtures.issue_lookup_response });
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runLink = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "ckopq3f5u00012qqqs64aqkef", "--blocks", " LIN-456 ", "--yes" };
+            return issue_link_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runLink);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "invalid issue identifier") == null);
+
+    const lookup_series = server.fixtures.getPtr("IssueLookup") orelse return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), lookup_series.*.next);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("IssueLookup", recorded.operation);
+
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const root = parsed.value;
+    if (root != .object) return error.TestExpectedResult;
+
+    const filter = root.object.get("filter") orelse return error.TestExpectedResult;
+    if (filter != .object) return error.TestExpectedResult;
+
+    const team_obj = filter.object.get("team") orelse return error.TestExpectedResult;
+    if (team_obj != .object) return error.TestExpectedResult;
+    const key_obj = team_obj.object.get("key") orelse return error.TestExpectedResult;
+    if (key_obj != .object) return error.TestExpectedResult;
+    const eq_key = key_obj.object.get("eq") orelse return error.TestExpectedResult;
+    if (eq_key != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("LIN", eq_key.string);
+
+    const number_obj = filter.object.get("number") orelse return error.TestExpectedResult;
+    if (number_obj != .object) return error.TestExpectedResult;
+    const eq_number = number_obj.object.get("eq") orelse return error.TestExpectedResult;
+    if (eq_number != .integer) return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(i64, 456), eq_number.integer);
 }
 
 test "issue view filters fields" {

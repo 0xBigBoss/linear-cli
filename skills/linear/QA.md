@@ -75,7 +75,7 @@ Verify each command in the table works:
 - [ ] `linear issue view ID`
 - [ ] `linear issue create` (with required flags)
 - [ ] `linear issue update ID` (with at least one field)
-- [ ] `linear issue link UUID` (with relation flag - **requires UUIDs**, see Phase 6)
+- [ ] `linear issue link ID` (with relation flag - accepts TEAM-NUMBER or UUID)
 - [ ] `linear issue delete ID` (dry-run first)
 - [ ] `linear teams list`
 - [ ] `linear me`
@@ -121,21 +121,19 @@ Test issue update functionality:
 - [ ] `linear issue update ID --priority 1` (no --yes) → error "confirmation required"
 
 ### Phase 6: Issue Link Command
-Test issue linking functionality (**all IDs must be UUIDs**):
-- [ ] `linear issue link UUID --blocks OTHER_UUID --yes` - creates blocks relation
-- [ ] `linear issue link UUID --related OTHER_UUID --yes` - creates related relation
-- [ ] `linear issue link UUID --duplicate OTHER_UUID --yes` - marks as duplicate
-- [ ] `linear issue link UUID --yes` (no relation) → error "exactly one of --blocks"
-- [ ] `linear issue link UUID --blocks A --related B --yes` → error "only one of --blocks"
-- [ ] `linear issue link IDENTIFIER --blocks OTHER_UUID --yes` → error "Argument Validation Error" (identifiers not supported)
-
-To get UUIDs: `linear issue view ID --json | jq -r '.issue.id'`
+Test issue linking functionality (accepts TEAM-NUMBER identifiers or UUIDs):
+- [ ] `linear issue link ENG-123 --blocks ENG-456 --yes` - creates blocks relation
+- [ ] `linear issue link ENG-123 --related ENG-456 --yes` - creates related relation
+- [ ] `linear issue link ENG-123 --duplicate ENG-456 --yes` - marks as duplicate
+- [ ] `linear issue link ENG-123 --yes` (no relation) → error "exactly one of --blocks"
+- [ ] `linear issue link ENG-123 --blocks A --related B --yes` → error "only one of --blocks"
+- [ ] `linear issue link UUID --blocks UUID --yes` - UUIDs still work directly
 
 ### Phase 7: Hygiene Section
 Verify hygiene examples from SKILL.md work:
 - [ ] Assignment workflow: `linear issue update ENG-123 --assignee me --yes` (identifiers work for main ID)
 - [ ] Sub-issue workflow: `linear issue update ENG-123 --parent PARENT_UUID --yes` (**--parent requires UUID**)
-- [ ] Blocking workflow: `linear issue link ISSUE_UUID --blocks OTHER_UUID --yes` (**both must be UUIDs**)
+- [ ] Blocking workflow: `linear issue link ENG-123 --blocks ENG-456 --yes` (TEAM-NUMBER identifiers now supported)
 
 ### Phase 8: GraphQL Recipes (graphql-recipes.md)
 Test at least these recipes:

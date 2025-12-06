@@ -95,6 +95,21 @@ pub fn run(ctx: Context) !u8 {
     client.timeout_ms = ctx.timeout_ms;
     if (ctx.endpoint) |ep| client.endpoint = ep;
 
+    if (!opts.yes) {
+        try stderr.print("issue link: confirmation required; re-run with --yes to proceed\n", .{});
+        return 1;
+    }
+
+    const source_resolved = common.resolveIssueId(ctx.allocator, &client, source_id, stderr, "issue link") catch {
+        return 1;
+    };
+    defer if (source_resolved.owned) ctx.allocator.free(source_resolved.value);
+
+    const target_resolved = common.resolveIssueId(ctx.allocator, &client, target_id, stderr, "issue link") catch {
+        return 1;
+    };
+    defer if (target_resolved.owned) ctx.allocator.free(target_resolved.value);
+
     var arena = std.heap.ArenaAllocator.init(ctx.allocator);
     defer arena.deinit();
     const var_alloc = arena.allocator();
@@ -106,17 +121,12 @@ pub fn run(ctx: Context) !u8 {
     };
 
     var input = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
-    try input.object.put("issueId", .{ .string = source_id });
-    try input.object.put("relatedIssueId", .{ .string = target_id });
+    try input.object.put("issueId", .{ .string = source_resolved.value });
+    try input.object.put("relatedIssueId", .{ .string = target_resolved.value });
     try input.object.put("type", .{ .string = relation_type_str });
 
     var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
     try variables.object.put("input", input);
-
-    if (!opts.yes) {
-        try stderr.print("issue link: confirmation required; re-run with --yes to proceed\n", .{});
-        return 1;
-    }
 
     const mutation =
         \\mutation IssueRelationCreate($input: IssueRelationCreateInput!) {

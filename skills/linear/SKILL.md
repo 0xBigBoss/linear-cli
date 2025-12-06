@@ -18,14 +18,14 @@ Interacts with Linear for issue tracking and project management using the `linea
 - **Commits**: Use conventional commits; ticket ID in body or trailer, not subject
 - **Assignment**: Assign yourself when starting work (`linear issue update ENG-123 --assignee me --yes`)
 - **Sub-issues**: Set parent to associate related work (requires UUID: `linear issue update ENG-123 --parent PARENT_UUID --yes`)
-- **Scope creep**: Create separate issues for discovered work; link with blocks relation (requires UUIDs: `linear issue link ISSUE_UUID --blocks OTHER_UUID --yes`)
+- **Scope creep**: Create separate issues for discovered work; link with blocks relation (`linear issue link ENG-123 --blocks ENG-456 --yes`)
 - **Cycles/projects**: Ask user preference when creating issues
 
 ## Quick Recipes
 
 ### List my issues
 ```bash
-linear issues list --team TEAM_KEY --human-time
+linear issues list --team TEAM_KEY --assignee me --human-time
 ```
 
 ### Search issues
@@ -90,7 +90,7 @@ linear project add-issue PROJECT_ID ISSUE_UUID --yes
 | `linear issue view ID` | View single issue |
 | `linear issue create` | Create new issue |
 | `linear issue update ID` | Update issue (assign, state, priority, parent*) |
-| `linear issue link UUID` | Link issues (blocks, related, duplicate)* |
+| `linear issue link ID` | Link issues (blocks, related, duplicate) |
 | `linear issue delete ID` | Archive an issue |
 | `linear projects list` | List projects |
 | `linear project view ID` | View project details |
@@ -104,7 +104,7 @@ linear project add-issue PROJECT_ID ISSUE_UUID --yes
 | `linear gql` | Run raw GraphQL |
 | `linear help CMD` | Command-specific help |
 
-*`--parent` and `issue link` require UUIDs, not identifiers. See [Finding IDs](#finding-ids).
+*`--parent` requires UUIDs, not identifiers. See [Finding IDs](#finding-ids).
 
 ## Common Flags
 
@@ -117,18 +117,17 @@ linear project add-issue PROJECT_ID ISSUE_UUID --yes
 
 ## Workflow: Creating and Linking Issues
 
-**Note:** `--parent` and `issue link` require UUIDs. Get UUID with `linear issue view ID --json | jq -r '.issue.id'`
+**Note:** `--parent` requires UUIDs. Get UUID with `linear issue view ID --json | jq -r '.issue.id'`
 
 ```
 Progress:
 - [ ] List teams to get TEAM_KEY: `linear teams list`
 - [ ] Create parent issue: `linear issue create --team KEY --title "Epic" --yes`
 - [ ] Create child issue: `linear issue create --team KEY --title "Task" --yes`
-- [ ] Get UUIDs for parent and child: `linear issue view ID --json | jq -r '.issue.id'`
+- [ ] Get parent UUID: `linear issue view PARENT_ID --json | jq -r '.issue.id'`
 - [ ] Set parent (UUID required): `linear issue update CHILD_ID --parent PARENT_UUID --yes`
 - [ ] Create another issue to link: `linear issue create --team KEY --title "Blocked" --yes`
-- [ ] Get UUID for new issue: `linear issue view ID --json | jq -r '.issue.id'`
-- [ ] Link blocking issue (UUIDs required): `linear issue link ISSUE_UUID --blocks OTHER_UUID --yes`
+- [ ] Link blocking issue: `linear issue link ISSUE_ID --blocks OTHER_ID --yes`
 - [ ] Verify: `linear issue view ISSUE_ID --json`
 ```
 
@@ -140,10 +139,9 @@ Progress:
 | 401 Unauthorized | Invalid/missing API key | Run `linear auth test` |
 | Mutation does nothing | Missing confirmation | Add `--yes` flag |
 | Can't find issue | Wrong ID or missing access | `issue view` accepts identifier or UUID; verify spelling and permissions |
-| issue link fails | Using identifier | `issue link` requires UUIDs for all args |
 | --parent fails | Using identifier | `--parent` flag requires UUID, not identifier |
 
-**ID format summary:** Most commands accept identifiers (ENG-123) for the main argument. Exceptions: `issue link` and `--parent` require UUIDs.
+**ID format summary:** Most commands accept identifiers (ENG-123). Exception: `--parent` requires UUIDs.
 
 ## Advanced Operations
 
@@ -153,11 +151,11 @@ For operations not covered by built-in commands, use `linear gql` with GraphQL:
 - **Upload files** - See `graphql-recipes.md` → "Upload File"
 - **Add comments** - See `graphql-recipes.md` → "Add Comment"
 
-Note: Linking issues and setting parent are available via `issue link` and `issue update --parent`, but these require UUIDs. Use `linear issue view ID --json` to get UUIDs.
+Note: Setting parent is available via `issue update --parent`, but requires UUIDs. Use `linear issue view ID --json` to get UUIDs.
 
 ## Finding IDs
 
-**Important:** `issue link` and `issue update --parent` require UUIDs.
+**Important:** `issue update --parent` requires UUIDs.
 
 ```bash
 # Get issue UUID from identifier
