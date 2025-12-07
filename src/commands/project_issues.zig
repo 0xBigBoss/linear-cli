@@ -278,43 +278,43 @@ pub fn parseOptions(args: [][]const u8) !Options {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear project add-issue|remove-issue <PROJECT_ID|SLUG_ID> <ISSUE_ID> --yes [--quiet] [--data-only] [--help]
+        \\Usage: linear project add-issue|remove-issue <PROJECT_ID> <ISSUE_ID> --yes [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --yes         Skip confirmation prompt (alias: --force)
         \\  --quiet       Print only the identifier
         \\  --data-only   Emit tab-separated fields without formatting (or JSON object with --json)
         \\  --help        Show this help message
         \\Examples:
-        \\  linear project add-issue proj_123 ENG-42 --yes
-        \\  linear project remove-issue proj_123 ENG-42 --yes
+        \\  linear project add-issue a6e7e3aa-53d0-42ab-9049-ac7aaa51f732 ENG-42 --yes
+        \\  linear project remove-issue 0949c8955675 ENG-42 --yes
         \\
     , .{});
 }
 
 pub fn addUsage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear project add-issue <PROJECT_ID|SLUG_ID> <ISSUE_ID> --yes [--quiet] [--data-only] [--help]
+        \\Usage: linear project add-issue <PROJECT_ID> <ISSUE_ID> --yes [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --yes         Skip confirmation prompt (alias: --force)
         \\  --quiet       Print only the identifier
         \\  --data-only   Emit tab-separated fields without formatting (or JSON object with --json)
         \\  --help        Show this help message
         \\Examples:
-        \\  linear project add-issue proj_123 ENG-42 --yes
+        \\  linear project add-issue a6e7e3aa-53d0-42ab-9049-ac7aaa51f732 ENG-42 --yes
         \\
     , .{});
 }
 
 pub fn removeUsage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear project remove-issue <PROJECT_ID|SLUG_ID> <ISSUE_ID> --yes [--quiet] [--data-only] [--help]
+        \\Usage: linear project remove-issue <PROJECT_ID> <ISSUE_ID> --yes [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --yes         Skip confirmation prompt (alias: --force)
         \\  --quiet       Print only the identifier
         \\  --data-only   Emit tab-separated fields without formatting (or JSON object with --json)
         \\  --help        Show this help message
         \\Examples:
-        \\  linear project remove-issue proj_123 ENG-42 --yes
+        \\  linear project remove-issue 0949c8955675 ENG-42 --yes
         \\
     , .{});
 }

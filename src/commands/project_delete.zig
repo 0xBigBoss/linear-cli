@@ -160,12 +160,12 @@ fn parseOptions(args: [][]const u8) !Options {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear project delete <ID|SLUG_ID> --yes [--help]
+        \\Usage: linear project delete <ID> --yes [--help]
         \\Flags:
         \\  --yes    Skip confirmation prompt (alias: --force)
         \\  --help   Show this help message
         \\Examples:
-        \\  linear project delete proj_123 --yes
+        \\  linear project delete a6e7e3aa-53d0-42ab-9049-ac7aaa51f732 --yes
         \\
     , .{});
 }

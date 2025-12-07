@@ -363,14 +363,14 @@ fn parseLimit(raw: []const u8) !usize {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear project view <ID|SLUG_ID> [--fields LIST] [--issue-limit N] [--help]
+        \\Usage: linear project view <ID> [--fields LIST] [--issue-limit N] [--help]
         \\Flags:
         \\  --fields LIST     Comma-separated fields (id,name,slug,description,state,start_date,target_date,url,lead,teams,issues)
         \\  --issue-limit N   Issues to fetch when the issues field is requested (0 disables; default: 10)
         \\  --help            Show this help message
         \\Examples:
-        \\  linear project view proj_123
-        \\  linear project view proj_456 --fields name,state,issues --issue-limit 5
+        \\  linear project view a6e7e3aa-53d0-42ab-9049-ac7aaa51f732
+        \\  linear project view 0949c8955675 --fields name,state,issues --issue-limit 5
         \\
     , .{});
 }

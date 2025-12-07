@@ -283,7 +283,7 @@ pub fn parseOptions(args: [][]const u8) !Options {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear project update <ID|SLUG_ID> [--name NAME] [--description TEXT] [--state STATE] [--yes] [--quiet] [--data-only] [--help]
+        \\Usage: linear project update <ID> [--name NAME] [--description TEXT] [--state STATE] [--yes] [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --name NAME         Update project name
         \\  --description TEXT  Update description
@@ -293,8 +293,8 @@ pub fn usage(writer: anytype) !void {
         \\  --data-only         Emit tab-separated fields without formatting (or JSON object with --json)
         \\  --help              Show this help message
         \\Examples:
-        \\  linear project update proj_123 --name \"New Name\" --yes
-        \\  linear project update proj_123 --state started --yes --json
+        \\  linear project update a6e7e3aa-53d0-42ab-9049-ac7aaa51f732 --name "New Name" --yes
+        \\  linear project update 0949c8955675 --state started --yes --json
         \\
     , .{});
 }
