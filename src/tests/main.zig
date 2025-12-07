@@ -400,7 +400,23 @@ test "parse issue create options" {
 }
 
 test "parse issue update options" {
-    const args = [_][]const u8{ "ENG-123", "--assignee", "me", "--parent", "ENG-100", "--state", "state-1", "--priority", "2", "--title", "Updated", "--yes", "--quiet" };
+    const args = [_][]const u8{
+        "ENG-123",
+        "--assignee",
+        "me",
+        "--parent",
+        "ENG-100",
+        "--state",
+        "state-1",
+        "--priority",
+        "2",
+        "--title",
+        "Updated",
+        "--description",
+        "Updated description",
+        "--yes",
+        "--quiet",
+    };
     const opts = try issue_update_cmd.parseOptions(args[0..]);
     try std.testing.expectEqualStrings("ENG-123", opts.identifier.?);
     try std.testing.expectEqualStrings("me", opts.assignee.?);
@@ -408,6 +424,7 @@ test "parse issue update options" {
     try std.testing.expectEqualStrings("state-1", opts.state.?);
     try std.testing.expectEqual(@as(i64, 2), opts.priority.?);
     try std.testing.expectEqualStrings("Updated", opts.title.?);
+    try std.testing.expectEqualStrings("Updated description", opts.description.?);
     try std.testing.expect(opts.yes);
     try std.testing.expect(opts.quiet);
 }
@@ -3811,6 +3828,55 @@ test "issue update sets projectId when provided" {
     const project_value = input.object.get("projectId") orelse return error.TestExpectedResult;
     if (project_value != .string) return error.TestExpectedResult;
     try std.testing.expectEqualStrings("proj_123", project_value.string);
+}
+
+test "issue update sets description when provided" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueUpdate", fixtures.issue_update_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--description", "New description", "--yes", "--quiet" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const input = vars.object.get("input") orelse return error.TestExpectedResult;
+    if (input != .object) return error.TestExpectedResult;
+    const description_value = input.object.get("description") orelse return error.TestExpectedResult;
+    if (description_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("New description", description_value.string);
 }
 
 test "graphql client reuses shared http client across instances" {

@@ -23,6 +23,7 @@ const Options = struct {
     state: ?[]const u8 = null,
     priority: ?i64 = null,
     title: ?[]const u8 = null,
+    description: ?[]const u8 = null,
     project: ?[]const u8 = null,
     yes: bool = false,
     help: bool = false,
@@ -53,7 +54,7 @@ pub fn run(ctx: Context) !u8 {
     };
 
     // Require at least one field to update
-    if (opts.assignee == null and opts.parent == null and opts.state == null and opts.priority == null and opts.title == null and opts.project == null) {
+    if (opts.assignee == null and opts.parent == null and opts.state == null and opts.priority == null and opts.title == null and opts.project == null and opts.description == null) {
         try stderr.print("issue update: at least one field to update is required\n", .{});
         return 1;
     }
@@ -100,6 +101,9 @@ pub fn run(ctx: Context) !u8 {
     }
     if (opts.title) |title_value| {
         try input.object.put("title", .{ .string = title_value });
+    }
+    if (opts.description) |desc| {
+        try input.object.put("description", .{ .string = desc });
     }
     if (opts.project) |project_id| {
         try input.object.put("projectId", .{ .string = project_id });
@@ -355,6 +359,17 @@ pub fn parseOptions(args: []const []const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--description")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            opts.description = args[idx + 1];
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--description=")) {
+            opts.description = arg["--description=".len..];
+            idx += 1;
+            continue;
+        }
         if (std.mem.eql(u8, arg, "--project")) {
             if (idx + 1 >= args.len) return error.MissingValue;
             opts.project = args[idx + 1];
@@ -384,13 +399,14 @@ pub fn parseOptions(args: []const []const u8) !Options {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue update <ID|IDENTIFIER> [--assignee USER_ID|me] [--parent ISSUE_ID] [--state STATE_ID] [--priority N] [--title TEXT] [--project PROJECT_ID] [--yes] [--quiet] [--data-only] [--help]
+        \\Usage: linear issue update <ID|IDENTIFIER> [--assignee USER_ID|me] [--parent ISSUE_ID] [--state STATE_ID] [--priority N] [--title TEXT] [--description TEXT] [--project PROJECT_ID] [--yes] [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --assignee USER_ID|me  Assign to user (use 'me' for current user)
         \\  --parent ISSUE_ID      Set parent issue (make sub-issue)
         \\  --state STATE_ID       Change workflow state
         \\  --priority N           Set priority (0-4)
         \\  --title TEXT           Update title
+        \\  --description TEXT     Update description
         \\  --project PROJECT_ID   Attach to project
         \\  --yes                  Skip confirmation prompt (alias: --force)
         \\  --quiet                Print only the identifier

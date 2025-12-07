@@ -115,6 +115,7 @@ Test issue update functionality:
 - [ ] `linear issue update ID --priority 1 --yes` - sets priority
 - [ ] `linear issue update ID --state STATE_ID --yes` - changes state (STATE_ID is a UUID)
 - [ ] `linear issue update ID --title "New Title" --yes` - updates title
+- [ ] `linear issue update ID --description "New description" --yes` - updates description
 - [ ] `linear issue update ID --parent PARENT_UUID --yes` - sets parent (**requires UUID**)
 - [ ] `linear issue update ID --parent IDENTIFIER --yes` → error "Argument Validation Error" (identifiers not supported)
 - [ ] `linear issue update ID --yes` (no fields) → error "at least one field"
