@@ -1,6 +1,6 @@
 ---
 name: linear
-description: Manages Linear issues, teams, and projects via CLI. Lists issues, creates tasks, views details, links issues, and runs GraphQL queries. Activates for "my Linear issues", "create Linear task", "link issues in Linear", "Linear API query", or any Linear project management request.
+description: Manages Linear issues, teams, and projects via CLI. Lists issues, creates tasks, views details, links issues, and runs GraphQL queries. Must use for "my Linear issues", "create Linear task", "link issues in Linear", "Linear API query", or any Linear project management request.
 ---
 
 # Linear CLI
