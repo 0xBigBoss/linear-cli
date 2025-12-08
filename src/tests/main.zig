@@ -8,6 +8,7 @@ const env_name_z = "LINEAR_API_KEY\x00";
 const config_env_name = "LINEAR_CONFIG";
 const config_env_name_z = "LINEAR_CONFIG\x00";
 const config = @import("config");
+const config_cmd = @import("config_cmd");
 const cli = @import("cli");
 const gql = @import("gql");
 const issues_cmd = @import("issues_test");
@@ -278,6 +279,405 @@ test "config env api key is not persisted" {
     const contents = try saved_file.readToEndAlloc(allocator, 1024);
     defer allocator.free(contents);
     try std.testing.expect(std.mem.indexOf(u8, contents, "env-only-key") == null);
+}
+
+test "config command sets default output" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const config_path = try std.fs.path.join(allocator, &.{ dir_path, "config.json" });
+    defer allocator.free(config_path);
+
+    var cfg = try config.load(allocator, config_path);
+    defer cfg.deinit();
+    try cfg.setApiKey("test-key");
+
+    const Runner = struct { ctx: config_cmd.Context };
+    const runConfig = struct {
+        pub fn call(r: *const Runner) !u8 {
+            return config_cmd.run(r.ctx);
+        }
+    }.call;
+
+    var args = [_][]const u8{ "set", "default_output", "json" };
+    const runner = Runner{ .ctx = .{
+        .allocator = allocator,
+        .config = &cfg,
+        .args = args[0..],
+        .json_output = false,
+        .config_path = config_path,
+        .retries = 0,
+        .timeout_ms = 10_000,
+    } };
+
+    const capture = try captureOutput(allocator, &runner, runConfig);
+    defer capture.deinit(allocator);
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "default_output saved") != null);
+
+    var reloaded = try config.load(allocator, config_path);
+    defer reloaded.deinit();
+    try std.testing.expectEqualStrings("json", reloaded.default_output);
+}
+
+test "config command rejects invalid default output" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const config_path = try std.fs.path.join(allocator, &.{ dir_path, "config.json" });
+    defer allocator.free(config_path);
+
+    var cfg = try config.load(allocator, config_path);
+    defer cfg.deinit();
+    try cfg.setApiKey("test-key");
+
+    const Runner = struct { ctx: config_cmd.Context };
+    const runConfig = struct {
+        pub fn call(r: *const Runner) !u8 {
+            return config_cmd.run(r.ctx);
+        }
+    }.call;
+
+    var args = [_][]const u8{ "set", "default_output", "csv" };
+    const runner = Runner{ .ctx = .{
+        .allocator = allocator,
+        .config = &cfg,
+        .args = args[0..],
+        .json_output = false,
+        .config_path = config_path,
+        .retries = 0,
+        .timeout_ms = 10_000,
+    } };
+
+    const capture = try captureOutput(allocator, &runner, runConfig);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "default_output must be 'table' or 'json'") != null);
+    try std.testing.expectEqualStrings(config.default_output_value, cfg.default_output);
+}
+
+test "config command validates team selection" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    const response =
+        \\{
+        \\  "data": {
+        \\    "teams": {
+        \\      "nodes": [
+        \\        { "id": "team-id-1", "key": "ENG" }
+        \\      ]
+        \\    }
+        \\  }
+        \\}
+    ;
+    try server.set("TeamLookup", response);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const config_path = try std.fs.path.join(allocator, &.{ dir_path, "config.json" });
+    defer allocator.free(config_path);
+
+    var cfg = try config.load(allocator, config_path);
+    defer cfg.deinit();
+    try cfg.setApiKey("test-key");
+
+    const Runner = struct { ctx: config_cmd.Context };
+    const runConfig = struct {
+        pub fn call(r: *const Runner) !u8 {
+            return config_cmd.run(r.ctx);
+        }
+    }.call;
+
+    var args = [_][]const u8{ "set", "default_team_id", "ENG" };
+    var runner = Runner{ .ctx = .{
+        .allocator = allocator,
+        .config = &cfg,
+        .args = args[0..],
+        .json_output = false,
+        .config_path = config_path,
+        .retries = 0,
+        .timeout_ms = 10_000,
+    } };
+
+    const capture = try captureOutput(allocator, &runner, runConfig);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqualStrings("ENG", cfg.default_team_id);
+    const cached = cfg.lookupTeamId("ENG") orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("team-id-1", cached);
+
+    var reloaded = try config.load(allocator, config_path);
+    defer reloaded.deinit();
+    const persisted = reloaded.lookupTeamId("ENG") orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("team-id-1", persisted);
+}
+
+test "config command rejects unknown team" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    const response = "{\"data\":{\"teams\":{\"nodes\":[]}}}";
+    try server.set("TeamLookup", response);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const config_path = try std.fs.path.join(allocator, &.{ dir_path, "config.json" });
+    defer allocator.free(config_path);
+
+    var cfg = try config.load(allocator, config_path);
+    defer cfg.deinit();
+    try cfg.setApiKey("test-key");
+
+    const Runner = struct { ctx: config_cmd.Context };
+    const runConfig = struct {
+        pub fn call(r: *const Runner) !u8 {
+            return config_cmd.run(r.ctx);
+        }
+    }.call;
+
+    var args = [_][]const u8{ "set", "default_team_id", "MISSING" };
+    var runner = Runner{ .ctx = .{
+        .allocator = allocator,
+        .config = &cfg,
+        .args = args[0..],
+        .json_output = false,
+        .config_path = config_path,
+        .retries = 0,
+        .timeout_ms = 10_000,
+    } };
+
+    const capture = try captureOutput(allocator, &runner, runConfig);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "team 'MISSING' not found") != null);
+    try std.testing.expectEqual(@as(usize, 0), cfg.default_team_id.len);
+}
+
+test "config command unsets state filter" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const config_path = try std.fs.path.join(allocator, &.{ dir_path, "config.json" });
+    defer allocator.free(config_path);
+
+    var cfg = try config.load(allocator, config_path);
+    defer cfg.deinit();
+    try cfg.setApiKey("test-key");
+
+    const Runner = struct { ctx: config_cmd.Context };
+    const runConfig = struct {
+        pub fn call(r: *const Runner) !u8 {
+            return config_cmd.run(r.ctx);
+        }
+    }.call;
+
+    var set_args = [_][]const u8{ "set", "default_state_filter", "backlog" };
+    var runner = Runner{ .ctx = .{
+        .allocator = allocator,
+        .config = &cfg,
+        .args = set_args[0..],
+        .json_output = false,
+        .config_path = config_path,
+        .retries = 0,
+        .timeout_ms = 10_000,
+    } };
+
+    const set_capture = try captureOutput(allocator, &runner, runConfig);
+    defer set_capture.deinit(allocator);
+    try std.testing.expectEqual(@as(u8, 0), set_capture.exit_code);
+    try std.testing.expectEqual(@as(usize, 1), cfg.default_state_filter.len);
+    try std.testing.expectEqualStrings("backlog", cfg.default_state_filter[0]);
+
+    var unset_args = [_][]const u8{ "unset", "default_state_filter" };
+    runner.ctx.args = unset_args[0..];
+    const unset_capture = try captureOutput(allocator, &runner, runConfig);
+    defer unset_capture.deinit(allocator);
+    try std.testing.expectEqual(@as(u8, 0), unset_capture.exit_code);
+    try std.testing.expectEqual(config.default_state_filter_value.len, cfg.default_state_filter.len);
+    for (cfg.default_state_filter, 0..) |entry, idx| {
+        try std.testing.expectEqualStrings(config.default_state_filter_value[idx], entry);
+    }
+}
+
+test "config command unsets default output" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const config_path = try std.fs.path.join(allocator, &.{ dir_path, "config.json" });
+    defer allocator.free(config_path);
+
+    var cfg = try config.load(allocator, config_path);
+    defer cfg.deinit();
+    try cfg.setApiKey("test-key");
+
+    const Runner = struct { ctx: config_cmd.Context };
+    const runConfig = struct {
+        pub fn call(r: *const Runner) !u8 {
+            return config_cmd.run(r.ctx);
+        }
+    }.call;
+
+    var set_args = [_][]const u8{ "set", "default_output", "json" };
+    var runner = Runner{ .ctx = .{
+        .allocator = allocator,
+        .config = &cfg,
+        .args = set_args[0..],
+        .json_output = false,
+        .config_path = config_path,
+        .retries = 0,
+        .timeout_ms = 10_000,
+    } };
+
+    const set_capture = try captureOutput(allocator, &runner, runConfig);
+    defer set_capture.deinit(allocator);
+    try std.testing.expectEqual(@as(u8, 0), set_capture.exit_code);
+    try std.testing.expectEqualStrings("json", cfg.default_output);
+
+    var unset_args = [_][]const u8{ "unset", "default_output" };
+    runner.ctx.args = unset_args[0..];
+    const unset_capture = try captureOutput(allocator, &runner, runConfig);
+    defer unset_capture.deinit(allocator);
+    try std.testing.expectEqual(@as(u8, 0), unset_capture.exit_code);
+    try std.testing.expectEqualStrings(config.default_output_value, cfg.default_output);
+
+    var reloaded = try config.load(allocator, config_path);
+    defer reloaded.deinit();
+    try std.testing.expectEqualStrings(config.default_output_value, reloaded.default_output);
+}
+
+test "config command unsets default team id" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const config_path = try std.fs.path.join(allocator, &.{ dir_path, "config.json" });
+    defer allocator.free(config_path);
+
+    var cfg = try config.load(allocator, config_path);
+    defer cfg.deinit();
+    try cfg.setApiKey("test-key");
+    try cfg.setDefaultTeamId("TEAM-123");
+
+    const Runner = struct { ctx: config_cmd.Context };
+    const runConfig = struct {
+        pub fn call(r: *const Runner) !u8 {
+            return config_cmd.run(r.ctx);
+        }
+    }.call;
+
+    var args = [_][]const u8{ "unset", "default_team_id" };
+    const runner = Runner{ .ctx = .{
+        .allocator = allocator,
+        .config = &cfg,
+        .args = args[0..],
+        .json_output = false,
+        .config_path = config_path,
+        .retries = 0,
+        .timeout_ms = 10_000,
+    } };
+
+    const capture = try captureOutput(allocator, &runner, runConfig);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expectEqual(@as(usize, 0), cfg.default_team_id.len);
+
+    var reloaded = try config.load(allocator, config_path);
+    defer reloaded.deinit();
+    try std.testing.expectEqual(@as(usize, 0), reloaded.default_team_id.len);
+}
+
+test "config show returns json" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(dir_path);
+    const config_path = try std.fs.path.join(allocator, &.{ dir_path, "config.json" });
+    defer allocator.free(config_path);
+
+    var cfg = try config.load(allocator, config_path);
+    defer cfg.deinit();
+    try cfg.setDefaultTeamId("ENG");
+    try cfg.setDefaultOutput("json");
+    const states = [_][]const u8{ "backlog", "started" };
+    try cfg.setStateFilterValues(states[0..]);
+
+    const Runner = struct { ctx: config_cmd.Context };
+    const runConfig = struct {
+        pub fn call(r: *const Runner) !u8 {
+            return config_cmd.run(r.ctx);
+        }
+    }.call;
+
+    var args = [_][]const u8{"show"};
+    const runner = Runner{ .ctx = .{
+        .allocator = allocator,
+        .config = &cfg,
+        .args = args[0..],
+        .json_output = true,
+        .config_path = config_path,
+        .retries = 0,
+        .timeout_ms = 10_000,
+    } };
+
+    const capture = try captureOutput(allocator, &runner, runConfig);
+    defer capture.deinit(allocator);
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, capture.stdout, .{});
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value == .object);
+    const obj = parsed.value.object;
+
+    const config_path_value = obj.get("config_path") orelse return error.TestExpectedResult;
+    try std.testing.expect(config_path_value == .string);
+    try std.testing.expectEqualStrings(config_path, config_path_value.string);
+
+    const team_value = obj.get("default_team_id") orelse return error.TestExpectedResult;
+    try std.testing.expect(team_value == .string);
+    try std.testing.expectEqualStrings("ENG", team_value.string);
+
+    const output_value = obj.get("default_output") orelse return error.TestExpectedResult;
+    try std.testing.expect(output_value == .string);
+    try std.testing.expectEqualStrings("json", output_value.string);
+
+    const state_value = obj.get("default_state_filter") orelse return error.TestExpectedResult;
+    try std.testing.expect(state_value == .array);
+    try std.testing.expectEqual(@as(usize, 2), state_value.array.items.len);
+    try std.testing.expect(state_value.array.items[0] == .string);
+    try std.testing.expect(state_value.array.items[1] == .string);
+    try std.testing.expectEqualStrings("backlog", state_value.array.items[0].string);
+    try std.testing.expectEqualStrings("started", state_value.array.items[1].string);
 }
 
 test "parse gql options" {

@@ -6,6 +6,7 @@ const cli = @import("cli");
 const graphql = @import("graphql");
 const gql_command = @import("commands/gql.zig");
 const auth_command = @import("commands/auth.zig");
+const config_command = @import("commands/config.zig");
 const me_command = @import("commands/me.zig");
 const teams_command = @import("commands/teams.zig");
 const issues_command = @import("commands/issues.zig");
@@ -139,6 +140,19 @@ fn run() !u8 {
 
     if (std.mem.eql(u8, subcommand, "auth")) {
         return auth_command.run(.{
+            .allocator = allocator,
+            .config = &cfg,
+            .args = sub_args,
+            .json_output = json_output,
+            .config_path = opts.config_path,
+            .retries = opts.retries,
+            .timeout_ms = opts.timeout_ms,
+            .endpoint = opts.endpoint,
+        });
+    }
+
+    if (std.mem.eql(u8, subcommand, "config")) {
+        return config_command.run(.{
             .allocator = allocator,
             .config = &cfg,
             .args = sub_args,
@@ -405,6 +419,25 @@ fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
         return 0;
     }
 
+    if (std.mem.eql(u8, target, "config")) {
+        if (tail.len > 0) {
+            if (std.mem.eql(u8, tail[0], "set")) {
+                try config_command.setUsage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "unset")) {
+                try config_command.unsetUsage(out);
+                return 0;
+            }
+            if (std.mem.eql(u8, tail[0], "show")) {
+                try config_command.showUsage(out);
+                return 0;
+            }
+        }
+        try config_command.usage(out);
+        return 0;
+    }
+
     if (std.mem.eql(u8, target, "teams")) {
         try teams_command.usage(out);
         return 0;
@@ -516,6 +549,7 @@ fn printUsage(writer: anytype) !void {
         \\linear [--json] [--config PATH] [--endpoint URL] [--no-keepalive] [--retries N] [--timeout-ms MS] [--help] [--version] <command> [args]
         \\Commands:
         \\  auth set|test|show   Manage or validate authentication
+        \\  config show|set|unset Manage CLI defaults (team/output/state filter)
         \\  me                   Show current user
         \\  teams list           List teams
         \\  search               Search issues by keyword

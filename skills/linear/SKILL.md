@@ -7,10 +7,22 @@ description: Manages Linear issues, teams, and projects via CLI. Lists issues, c
 
 Interacts with Linear for issue tracking and project management using the `linear` command.
 
-## Prerequisites
+## Scope
+- Use for Linear issue/project/teams management via the CLI or GraphQL (`linear gql`).
+- Prefer built-in commands over raw GraphQL unless functionality is missing.
+- Keep defaults in sync with the user's config; do not hard-code team IDs/outputs.
 
-- Binary: `npm install -g @0xbigboss/linear-cli`
-- Auth: `linear auth set` or set `LINEAR_API_KEY` env var
+## Install & Setup
+- Install: `npm install -g @0xbigboss/linear-cli`
+- Auth: `linear auth set` or set `LINEAR_API_KEY`
+- Defaults: `linear config set default_team_id TEAM_KEY`, `linear config set default_output json|table`, `linear config set default_state_filter completed,canceled`
+- Inspect or reset defaults: `linear config show`, `linear config unset default_output`
+- Config path: `~/.config/linear/config.json` (override with `--config PATH` or `LINEAR_CONFIG`)
+
+## Prerequisites
+- CLI installed and on PATH
+- Valid Linear API key available
+- Team defaults set or provided per command (team key/UUID)
 
 ## Hygiene
 
@@ -67,6 +79,13 @@ linear auth test
 ### List projects
 ```bash
 linear projects list --limit 10
+```
+
+### View or change CLI defaults
+```bash
+linear config show
+linear config set default_output json
+linear config unset default_state_filter
 ```
 
 ### Create and manage a project

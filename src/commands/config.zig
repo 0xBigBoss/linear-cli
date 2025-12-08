@@ -1,0 +1,512 @@
+const std = @import("std");
+const config = @import("config");
+const graphql = @import("graphql");
+const printer = @import("printer");
+const common = @import("common");
+
+const Allocator = std.mem.Allocator;
+
+pub const Context = struct {
+    allocator: Allocator,
+    config: *config.Config,
+    args: [][]const u8,
+    json_output: bool,
+    config_path: ?[]const u8,
+    retries: u8,
+    timeout_ms: u32,
+    endpoint: ?[]const u8 = null,
+};
+
+const ShowOptions = struct {
+    help: bool = false,
+};
+
+const SetOptions = struct {
+    key: ?[]const u8 = null,
+    value: ?[]const u8 = null,
+    help: bool = false,
+};
+
+const UnsetOptions = struct {
+    key: ?[]const u8 = null,
+    help: bool = false,
+};
+
+const ConfigKey = enum { default_team_id, default_output, default_state_filter };
+
+pub fn run(ctx: Context) !u8 {
+    var stderr_buf: [0]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+    var stderr = &stderr_writer.interface;
+
+    if (ctx.args.len == 0) {
+        try usage(stderr);
+        return 1;
+    }
+
+    const sub = ctx.args[0];
+    const rest = ctx.args[1..];
+
+    if (std.mem.eql(u8, sub, "show")) return runShow(ctx, rest);
+    if (std.mem.eql(u8, sub, "set")) return runSet(ctx, rest);
+    if (std.mem.eql(u8, sub, "unset")) return runUnset(ctx, rest);
+
+    try stderr.print("config: unknown command: {s}\n", .{sub});
+    try usage(stderr);
+    return 1;
+}
+
+fn runShow(ctx: Context, args: [][]const u8) !u8 {
+    var stderr_buf: [0]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+    var stderr = &stderr_writer.interface;
+    const opts = parseShowOptions(args) catch |err| {
+        try stderr.print("config show: {s}\n", .{@errorName(err)});
+        try showUsage(stderr);
+        return 1;
+    };
+
+    if (opts.help) {
+        var out_buf: [0]u8 = undefined;
+        var out_writer = std.fs.File.stdout().writer(&out_buf);
+        try showUsage(&out_writer.interface);
+        return 0;
+    }
+
+    const filter_display = try formatStateFilter(ctx.allocator, ctx.config.default_state_filter);
+    defer ctx.allocator.free(filter_display);
+
+    const state_filter_value: []const u8 = if (filter_display.len == 0) "(none)" else filter_display;
+    const team_value: []const u8 = if (ctx.config.default_team_id.len == 0) "(not set)" else ctx.config.default_team_id;
+    const config_path = ctx.config.config_path orelse "(unknown)";
+
+    if (ctx.json_output) {
+        var out_buf: [0]u8 = undefined;
+        var out_writer = std.fs.File.stdout().writer(&out_buf);
+
+        var json_buffer = std.io.Writer.Allocating.init(ctx.allocator);
+        defer json_buffer.deinit();
+        var jw = std.json.Stringify{ .writer = &json_buffer.writer, .options = .{ .whitespace = .indent_2 } };
+        try jw.beginObject();
+        try jw.objectField("config_path");
+        try jw.write(config_path);
+        try jw.objectField("default_team_id");
+        try jw.write(ctx.config.default_team_id);
+        try jw.objectField("default_output");
+        try jw.write(ctx.config.default_output);
+        try jw.objectField("default_state_filter");
+        try jw.beginArray();
+        for (ctx.config.default_state_filter) |entry| {
+            try jw.write(entry);
+        }
+        try jw.endArray();
+        try jw.endObject();
+
+        try out_writer.interface.writeAll(json_buffer.writer.buffered());
+        return 0;
+    }
+
+    const pairs = [_]printer.KeyValue{
+        .{ .key = "config_path", .value = config_path },
+        .{ .key = "default_team_id", .value = team_value },
+        .{ .key = "default_output", .value = ctx.config.default_output },
+        .{ .key = "default_state_filter", .value = state_filter_value },
+    };
+
+    var out_buf: [0]u8 = undefined;
+    var out_writer = std.fs.File.stdout().writer(&out_buf);
+    try printer.printKeyValues(&out_writer.interface, pairs[0..]);
+    return 0;
+}
+
+fn runSet(ctx: Context, args: [][]const u8) !u8 {
+    var stderr_buf: [0]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+    var stderr = &stderr_writer.interface;
+    const opts = parseSetOptions(args) catch |err| {
+        try stderr.print("config set: {s}\n", .{@errorName(err)});
+        try setUsage(stderr);
+        return 1;
+    };
+
+    if (opts.help) {
+        var out_buf: [0]u8 = undefined;
+        var out_writer = std.fs.File.stdout().writer(&out_buf);
+        try setUsage(&out_writer.interface);
+        return 0;
+    }
+
+    const key_raw = opts.key orelse {
+        try stderr.print("config set: missing KEY\n", .{});
+        try setUsage(stderr);
+        return 1;
+    };
+    const value_raw = opts.value orelse {
+        try stderr.print("config set: missing VALUE\n", .{});
+        try setUsage(stderr);
+        return 1;
+    };
+    const trimmed_value = std.mem.trim(u8, value_raw, " \t\r\n");
+
+    const parsed_key = parseKey(key_raw) orelse {
+        try stderr.print("config set: unknown key: {s}\n", .{key_raw});
+        try setUsage(stderr);
+        return 1;
+    };
+
+    if (trimmed_value.len == 0 and parsed_key != .default_state_filter) {
+        try stderr.print("config set: VALUE cannot be empty\n", .{});
+        return 1;
+    }
+
+    const save_result = switch (parsed_key) {
+        .default_output => setDefaultOutput(ctx, trimmed_value, stderr),
+        .default_state_filter => setDefaultStateFilter(ctx, trimmed_value, stderr),
+        .default_team_id => setDefaultTeam(ctx, trimmed_value, stderr),
+    };
+    save_result catch |err| switch (err) {
+        error.InvalidValue => return 1,
+        error.InvalidTeam => {
+            try stderr.print("config set: team '{s}' not found\n", .{trimmed_value});
+            return 1;
+        },
+        common.CommandError.CommandFailed => return 1,
+        else => {
+            try stderr.print("config set: {s}\n", .{@errorName(err)});
+            return 1;
+        },
+    };
+
+    if (ctx.config.save(ctx.allocator, ctx.config_path)) |_| {} else |err| {
+        try stderr.print("config set: failed to save config: {s}\n", .{@errorName(err)});
+        return 1;
+    }
+
+    var out_buf: [0]u8 = undefined;
+    var out_writer = std.fs.File.stdout().writer(&out_buf);
+    try out_writer.interface.print("{s} saved\n", .{keyLabel(parsed_key)});
+    return 0;
+}
+
+fn runUnset(ctx: Context, args: [][]const u8) !u8 {
+    var stderr_buf: [0]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+    var stderr = &stderr_writer.interface;
+    const opts = parseUnsetOptions(args) catch |err| {
+        try stderr.print("config unset: {s}\n", .{@errorName(err)});
+        try unsetUsage(stderr);
+        return 1;
+    };
+
+    if (opts.help) {
+        var out_buf: [0]u8 = undefined;
+        var out_writer = std.fs.File.stdout().writer(&out_buf);
+        try unsetUsage(&out_writer.interface);
+        return 0;
+    }
+
+    const key_raw = opts.key orelse {
+        try stderr.print("config unset: missing KEY\n", .{});
+        try unsetUsage(stderr);
+        return 1;
+    };
+    const parsed_key = parseKey(key_raw) orelse {
+        try stderr.print("config unset: unknown key: {s}\n", .{key_raw});
+        try unsetUsage(stderr);
+        return 1;
+    };
+
+    switch (parsed_key) {
+        .default_team_id => ctx.config.resetDefaultTeamId(),
+        .default_output => ctx.config.resetDefaultOutput(),
+        .default_state_filter => ctx.config.resetStateFilter(),
+    }
+
+    if (ctx.config.save(ctx.allocator, ctx.config_path)) |_| {} else |err| {
+        try stderr.print("config unset: failed to save config: {s}\n", .{@errorName(err)});
+        return 1;
+    }
+
+    var out_buf: [0]u8 = undefined;
+    var out_writer = std.fs.File.stdout().writer(&out_buf);
+    try out_writer.interface.print("{s} reset\n", .{keyLabel(parsed_key)});
+    return 0;
+}
+
+fn setDefaultOutput(ctx: Context, value: []const u8, stderr: anytype) !void {
+    if (std.ascii.eqlIgnoreCase(value, "table")) {
+        try ctx.config.setDefaultOutput("table");
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(value, "json")) {
+        try ctx.config.setDefaultOutput("json");
+        return;
+    }
+
+    try stderr.print("config set: default_output must be 'table' or 'json'\n", .{});
+    return error.InvalidValue;
+}
+
+fn setDefaultStateFilter(ctx: Context, value: []const u8, stderr: anytype) !void {
+    const parsed = parseStateFilterValues(ctx.allocator, value) catch |err| {
+        try stderr.print("config set: {s}\n", .{@errorName(err)});
+        return error.InvalidValue;
+    };
+    defer ctx.allocator.free(parsed);
+
+    try ctx.config.setStateFilterValues(parsed);
+}
+
+fn setDefaultTeam(ctx: Context, value: []const u8, stderr: anytype) !void {
+    const api_key = common.requireApiKey(ctx.config, null, stderr, "config set") catch {
+        return common.CommandError.CommandFailed;
+    };
+
+    var client = graphql.GraphqlClient.init(ctx.allocator, api_key);
+    defer client.deinit();
+    client.max_retries = ctx.retries;
+    client.timeout_ms = ctx.timeout_ms;
+    if (ctx.endpoint) |ep| client.endpoint = ep;
+
+    validateTeamSelection(ctx, &client, value, stderr) catch |err| switch (err) {
+        error.InvalidTeam => return error.InvalidTeam,
+        else => return common.CommandError.CommandFailed,
+    };
+
+    try ctx.config.setDefaultTeamId(value);
+}
+
+fn validateTeamSelection(ctx: Context, client: *graphql.GraphqlClient, team_value: []const u8, stderr: anytype) !void {
+    var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+    defer arena.deinit();
+    const var_alloc = arena.allocator();
+
+    var filter = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var eq_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try eq_obj.object.put("eq", .{ .string = team_value });
+    const filter_key = if (isUuid(team_value)) "id" else "key";
+    try filter.object.put(filter_key, eq_obj);
+
+    var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try variables.object.put("filter", filter);
+    try variables.object.put("first", .{ .integer = 1 });
+
+    const query =
+        \\query TeamLookup($filter: TeamFilter, $first: Int!) {
+        \\  teams(filter: $filter, first: $first) {
+        \\    nodes { id key }
+        \\  }
+        \\}
+    ;
+
+    var response = common.send("config set", client, ctx.allocator, .{
+        .query = query,
+        .variables = variables,
+        .operation_name = "TeamLookup",
+    }, stderr) catch {
+        return common.CommandError.CommandFailed;
+    };
+    defer response.deinit();
+
+    common.checkResponse("config set", &response, stderr, client.api_key) catch {
+        return common.CommandError.CommandFailed;
+    };
+
+    const data_value = response.data() orelse {
+        try stderr.print("config set: response missing data\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    const teams_obj = common.getObjectField(data_value, "teams") orelse {
+        try stderr.print("config set: teams missing in response\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    const nodes_array = common.getArrayField(teams_obj, "nodes") orelse {
+        try stderr.print("config set: team nodes missing in response\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    if (nodes_array.items.len == 0) return error.InvalidTeam;
+
+    const first = nodes_array.items[0];
+    if (first != .object) {
+        try stderr.print("config set: invalid team payload\n", .{});
+        return common.CommandError.CommandFailed;
+    }
+    const id_value = common.getStringField(first, "id") orelse {
+        try stderr.print("config set: team id missing in response\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    const key_value = common.getStringField(first, "key");
+
+    cacheTeamLookup(ctx, team_value, id_value, key_value, stderr);
+}
+
+fn cacheTeamLookup(ctx: Context, provided: []const u8, id_value: []const u8, key_value: ?[]const u8, stderr: anytype) void {
+    const cache_targets = [_][]const u8{
+        provided,
+        key_value orelse "",
+    };
+
+    for (cache_targets) |entry| {
+        if (entry.len == 0) continue;
+        const cached = ctx.config.cacheTeamId(entry, id_value);
+        if (cached) |_| {} else |err| {
+            stderr.print("config set: warning: failed to cache team id: {s}\n", .{@errorName(err)}) catch {};
+        }
+    }
+}
+
+fn parseShowOptions(args: [][]const u8) !ShowOptions {
+    var opts = ShowOptions{};
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            opts.help = true;
+            continue;
+        }
+        if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
+        return error.UnexpectedArgument;
+    }
+    return opts;
+}
+
+fn parseSetOptions(args: [][]const u8) !SetOptions {
+    var opts = SetOptions{};
+    var positionals: [2][]const u8 = undefined;
+    var count: usize = 0;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            opts.help = true;
+            continue;
+        }
+        if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
+        if (count >= positionals.len) return error.UnexpectedArgument;
+        positionals[count] = arg;
+        count += 1;
+    }
+    if (count > 0) opts.key = positionals[0];
+    if (count > 1) opts.value = positionals[1];
+    return opts;
+}
+
+fn parseUnsetOptions(args: [][]const u8) !UnsetOptions {
+    var opts = UnsetOptions{};
+    var positionals: [1][]const u8 = undefined;
+    var count: usize = 0;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            opts.help = true;
+            continue;
+        }
+        if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
+        if (count >= positionals.len) return error.UnexpectedArgument;
+        positionals[count] = arg;
+        count += 1;
+    }
+    if (count > 0) opts.key = positionals[0];
+    return opts;
+}
+
+fn parseKey(value: []const u8) ?ConfigKey {
+    if (std.ascii.eqlIgnoreCase(value, "default_team_id")) return .default_team_id;
+    if (std.ascii.eqlIgnoreCase(value, "default_output")) return .default_output;
+    if (std.ascii.eqlIgnoreCase(value, "default_state_filter")) return .default_state_filter;
+    return null;
+}
+
+fn keyLabel(key: ConfigKey) []const u8 {
+    return switch (key) {
+        .default_team_id => "default_team_id",
+        .default_output => "default_output",
+        .default_state_filter => "default_state_filter",
+    };
+}
+
+fn parseStateFilterValues(allocator: Allocator, raw: []const u8) ![]const []const u8 {
+    var values = std.ArrayListUnmanaged([]const u8){};
+    errdefer values.deinit(allocator);
+
+    var iter = std.mem.tokenizeScalar(u8, raw, ',');
+    while (iter.next()) |entry| {
+        const trimmed = std.mem.trim(u8, entry, " \t\r\n");
+        if (trimmed.len == 0) continue;
+        try values.append(allocator, trimmed);
+    }
+
+    return values.toOwnedSlice(allocator);
+}
+
+fn formatStateFilter(allocator: Allocator, values: []const []const u8) ![]u8 {
+    if (values.len == 0) {
+        return allocator.dupe(u8, "(none)");
+    }
+
+    var buffer = std.ArrayListUnmanaged(u8){};
+    errdefer buffer.deinit(allocator);
+    for (values, 0..) |entry, idx| {
+        if (idx > 0) try buffer.append(allocator, ',');
+        try buffer.appendSlice(allocator, entry);
+    }
+    return buffer.toOwnedSlice(allocator);
+}
+
+fn isUuid(value: []const u8) bool {
+    if (value.len != 36) return false;
+    const dash_positions = [_]usize{ 8, 13, 18, 23 };
+    for (dash_positions) |idx| {
+        if (value[idx] != '-') return false;
+    }
+    return true;
+}
+
+pub fn usage(writer: anytype) !void {
+    try writer.print(
+        \\Usage: linear config show|set|unset [args]
+        \\Commands:
+        \\  show                 Display current config values
+        \\  set KEY VALUE        Set a config value (see 'linear help config set')
+        \\  unset KEY            Reset a config value to its default
+        \\
+    , .{});
+}
+
+pub fn showUsage(writer: anytype) !void {
+    try writer.print(
+        \\Usage: linear config show [--help]
+        \\Flags:
+        \\  --help    Show this help message
+        \\
+    , .{});
+}
+
+pub fn setUsage(writer: anytype) !void {
+    try writer.print(
+        \\Usage: linear config set KEY VALUE [--help]
+        \\Keys:
+        \\  default_team_id       Default team for commands (team key or UUID)
+        \\  default_output        Default output format: table|json
+        \\  default_state_filter  Comma-separated state types to exclude by default
+        \\Flags:
+        \\  --help                Show this help message
+        \\Examples:
+        \\  linear config set default_team_id ENG
+        \\  linear config set default_output json
+        \\  linear config set default_state_filter completed,canceled
+        \\
+    , .{});
+}
+
+pub fn unsetUsage(writer: anytype) !void {
+    try writer.print(
+        \\Usage: linear config unset KEY [--help]
+        \\Keys:
+        \\  default_team_id       Default team for commands
+        \\  default_output        Default output format
+        \\  default_state_filter  Default state exclusion filter
+        \\Flags:
+        \\  --help                Show this help message
+        \\Examples:
+        \\  linear config unset default_team_id
+        \\  linear config unset default_output
+        \\  linear config unset default_state_filter
+        \\
+    , .{});
+}

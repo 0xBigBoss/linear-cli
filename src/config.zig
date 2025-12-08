@@ -141,8 +141,56 @@ pub const Config = struct {
         try replaceRequiredString(self.allocator, &self.default_team_id, &self.owned_default_team_id, value);
     }
 
+    pub fn resetDefaultTeamId(self: *Config) void {
+        if (self.owned_default_team_id) {
+            self.allocator.free(self.default_team_id);
+            self.owned_default_team_id = false;
+        }
+        self.default_team_id = default_team_id_value;
+    }
+
     pub fn setDefaultOutput(self: *Config, value: []const u8) !void {
         try replaceRequiredString(self.allocator, &self.default_output, &self.owned_default_output, value);
+    }
+
+    pub fn resetDefaultOutput(self: *Config) void {
+        if (self.owned_default_output) {
+            self.allocator.free(self.default_output);
+            self.owned_default_output = false;
+        }
+        self.default_output = default_output_value;
+    }
+
+    pub fn resetStateFilter(self: *Config) void {
+        if (self.owned_state_filter) {
+            for (self.default_state_filter) |entry| self.allocator.free(entry);
+            self.allocator.free(self.default_state_filter);
+            self.owned_state_filter = false;
+        }
+        self.default_state_filter = &default_state_filter_value;
+    }
+
+    pub fn setStateFilterValues(self: *Config, values: []const []const u8) !void {
+        var list = std.ArrayList([]const u8){};
+        errdefer {
+            for (list.items) |entry| self.allocator.free(entry);
+            list.deinit(self.allocator);
+        }
+
+        for (values) |entry| {
+            const duped = try self.allocator.dupe(u8, entry);
+            try list.append(self.allocator, duped);
+        }
+
+        const new_filter = try list.toOwnedSlice(self.allocator);
+
+        if (self.owned_state_filter) {
+            for (self.default_state_filter) |entry| self.allocator.free(entry);
+            self.allocator.free(self.default_state_filter);
+        }
+
+        self.default_state_filter = new_filter;
+        self.owned_state_filter = true;
     }
 
     pub fn setStateFilter(self: *Config, value: std.json.Value) !void {
@@ -151,25 +199,17 @@ pub const Config = struct {
             else => return error.InvalidConfig,
         };
 
-        if (self.owned_state_filter) {
-            for (self.default_state_filter) |entry| self.allocator.free(entry);
-            self.allocator.free(self.default_state_filter);
-        }
-
         var list = std.ArrayList([]const u8){};
-        errdefer {
-            for (list.items) |entry| self.allocator.free(entry);
-            list.deinit(self.allocator);
-        }
-
+        errdefer list.deinit(self.allocator);
         for (entries) |entry| {
             if (entry != .string) return error.InvalidConfig;
-            const duped = try self.allocator.dupe(u8, entry.string);
-            try list.append(self.allocator, duped);
+            try list.append(self.allocator, entry.string);
         }
 
-        self.default_state_filter = try list.toOwnedSlice(self.allocator);
-        self.owned_state_filter = true;
+        const items = list.items;
+        const result = self.setStateFilterValues(items);
+        list.deinit(self.allocator);
+        return result;
     }
 
     pub fn cacheTeamId(self: *Config, key: []const u8, id: []const u8) !bool {

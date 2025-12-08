@@ -38,6 +38,7 @@ Single-binary Linear client built with Zig 0.15.2. Uses stdlib only, defaults to
   - `default_output` (`table`|`json`, default `table`)
   - `default_state_filter` (default `["completed","canceled"]`)
   - `team_cache` (auto-populated key->id cache from `issue create`)
+- Manage defaults without editing JSON: `linear config show`, `linear config set default_team_id ENG`, `linear config set default_output json`, `linear config unset default_state_filter`
 - Files are saved with 0600 perms; the CLI warns if permissions drift. `auth show [--redacted]` surfaces the configured key without leaking the full token. `auth test` pings `viewer` to validate the current key.
 
 ## CLI Overview
@@ -55,6 +56,7 @@ Commands:
 - `auth set [--api-key KEY]` — save key to config (stdin/interactive fallback when the flag is omitted).
 - `auth test` — ping `viewer` to validate the key.
 - `auth show [--redacted]` — view the configured key (masked when requested).
+- `config show|set|unset` — view or update CLI defaults (team/output/state filter) without editing JSON.
 - `me` — show current user.
 - `teams list [--fields id,key,name] [--plain] [--no-truncate]` — list teams with optional column and formatting controls.
 - `search <query> [--team ID|KEY] [--fields title,description,comments,identifier] [--state-type TYPES] [--assignee USER_ID|me] [--limit N] [--case-sensitive]` — server-side search over titles/descriptions/comments or identifiers (identifier filter matches issue numbers; pagination warns when more results remain).

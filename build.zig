@@ -416,6 +416,26 @@ pub fn build(b: *std.Build) void {
     project_issues_test_mod.addImport("common", common_test_mod);
     tests_mod.addImport("project_issues_test", project_issues_test_mod);
 
+    const config_cmd_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/config.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    config_cmd_mod.addImport("config", config_mod);
+    config_cmd_mod.addImport("graphql", graphql_mod);
+    config_cmd_mod.addImport("printer", printer_mod);
+    config_cmd_mod.addImport("common", common_mod);
+    const config_cmd_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/config.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    config_cmd_test_mod.addImport("config", config_mod);
+    config_cmd_test_mod.addImport("graphql", graphql_mock_mod);
+    config_cmd_test_mod.addImport("printer", printer_mod);
+    config_cmd_test_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("config_cmd", config_cmd_test_mod);
+
     const auth_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/auth.zig"),
         .target = target,
