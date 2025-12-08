@@ -17,7 +17,7 @@ Advanced operations using `linear gql` for functionality not covered by built-in
 
 ## Link Two Issues
 
-**CLI alternative:** `linear issue link UUID --blocks|--related|--duplicate OTHER_UUID --yes`
+**CLI alternative:** `linear issue link ID|IDENTIFIER --blocks|--related|--duplicate OTHER_ID --yes`
 
 Creates relationships between issues. Relation types: `blocks`, `duplicate`, `related`.
 
