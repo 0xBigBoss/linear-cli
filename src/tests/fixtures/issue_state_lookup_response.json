@@ -1,0 +1,17 @@
+{
+  "data": {
+    "issue": {
+      "id": "issue-upd-1",
+      "team": {
+        "id": "team-123",
+        "states": {
+          "nodes": [
+            { "id": "69525da9-b8a9-4f58-a7b9-4187aaf9e02a", "name": "Done" },
+            { "id": "9d14bcd9-7b7b-47c9-96f6-e3a337c63025", "name": "In Progress" },
+            { "id": "75f04db2-6920-4a71-8ed8-2d1654651d65", "name": "Backlog" }
+          ]
+        }
+      }
+    }
+  }
+}

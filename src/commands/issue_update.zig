@@ -86,6 +86,13 @@ pub fn run(ctx: Context) !u8 {
         }
     }
 
+    var state_id: ?[]const u8 = null;
+    if (opts.state) |state_value| {
+        state_id = resolveWorkflowStateId(ctx, &client, var_alloc, target, state_value, stderr) catch {
+            return 1;
+        };
+    }
+
     var input = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
     if (assignee_id) |aid| {
         try input.object.put("assigneeId", .{ .string = aid });
@@ -93,8 +100,8 @@ pub fn run(ctx: Context) !u8 {
     if (opts.parent) |parent_id| {
         try input.object.put("parentId", .{ .string = parent_id });
     }
-    if (opts.state) |state_id| {
-        try input.object.put("stateId", .{ .string = state_id });
+    if (state_id) |state_value| {
+        try input.object.put("stateId", .{ .string = state_value });
     }
     if (opts.priority) |prio| {
         try input.object.put("priority", .{ .integer = prio });
@@ -284,6 +291,118 @@ fn resolveCurrentUserId(ctx: Context, client: *graphql.GraphqlClient, allocator:
     return allocator.dupe(u8, user_id);
 }
 
+fn resolveWorkflowStateId(
+    ctx: Context,
+    client: *graphql.GraphqlClient,
+    allocator: Allocator,
+    issue_identifier: []const u8,
+    state_value: []const u8,
+    stderr: anytype,
+) ![]const u8 {
+    const trimmed = std.mem.trim(u8, state_value, " \t");
+    if (trimmed.len == 0) {
+        try stderr.print("issue update: invalid --state value\n", .{});
+        return common.CommandError.CommandFailed;
+    }
+
+    if (common.looksLikeWorkflowStateId(trimmed)) {
+        return trimmed;
+    }
+
+    var variables = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+    try variables.object.put("id", .{ .string = issue_identifier });
+
+    const query =
+        \\query IssueStateLookup($id: String!) {
+        \\  issue(id: $id) {
+        \\    id
+        \\    team {
+        \\      id
+        \\      states { nodes { id name } }
+        \\    }
+        \\  }
+        \\}
+    ;
+
+    var response = common.send("issue update", client, ctx.allocator, .{
+        .query = query,
+        .variables = variables,
+        .operation_name = "IssueStateLookup",
+    }, stderr) catch {
+        return common.CommandError.CommandFailed;
+    };
+    defer response.deinit();
+
+    common.checkResponse("issue update", &response, stderr, client.api_key) catch {
+        return common.CommandError.CommandFailed;
+    };
+
+    const data_value = response.data() orelse {
+        try stderr.print("issue update: response missing data\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    const issue_obj = common.getObjectField(data_value, "issue") orelse {
+        try stderr.print("issue update: issue not found\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    const team_obj = common.getObjectField(issue_obj, "team") orelse {
+        try stderr.print("issue update: team missing in response\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    const states_obj = common.getObjectField(team_obj, "states") orelse {
+        try stderr.print("issue update: workflow states missing in response\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    const nodes = common.getArrayField(states_obj, "nodes") orelse {
+        try stderr.print("issue update: workflow states missing in response\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    if (nodes.items.len == 0) {
+        try stderr.print("issue update: no workflow states found for issue\n", .{});
+        return common.CommandError.CommandFailed;
+    }
+
+    var available = std.ArrayListUnmanaged(u8){};
+    defer available.deinit(ctx.allocator);
+    var first = true;
+
+    for (nodes.items) |node| {
+        if (node != .object) continue;
+        const name_value = common.getStringField(node, "name") orelse continue;
+        const name_trimmed = std.mem.trim(u8, name_value, " \t");
+        if (name_trimmed.len == 0) continue;
+
+        if (!first) try available.appendSlice(ctx.allocator, ", ");
+        try available.appendSlice(ctx.allocator, name_trimmed);
+        first = false;
+
+        const matches_name = std.ascii.eqlIgnoreCase(name_trimmed, trimmed);
+        const id_value = common.getStringField(node, "id") orelse {
+            if (matches_name) {
+                try stderr.print("issue update: workflow state id missing for '{s}'\n", .{name_trimmed});
+                return common.CommandError.CommandFailed;
+            }
+            continue;
+        };
+        const matches_id = std.mem.eql(u8, id_value, trimmed);
+        if (!matches_name and !matches_id) continue;
+
+        const duped = allocator.dupe(u8, id_value) catch {
+            try stderr.print("issue update: failed to allocate state id\n", .{});
+            return common.CommandError.CommandFailed;
+        };
+        return duped;
+    }
+
+    try stderr.print("issue update: state '{s}' not found", .{trimmed});
+    if (available.items.len > 0) {
+        try stderr.print("; available states: {s}\n", .{available.items});
+    } else {
+        try stderr.print("\n", .{});
+    }
+    return common.CommandError.CommandFailed;
+}
+
 pub fn parseOptions(args: []const []const u8) !Options {
     var opts = Options{};
     var idx: usize = 0;
@@ -399,11 +518,11 @@ pub fn parseOptions(args: []const []const u8) !Options {
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue update <ID|IDENTIFIER> [--assignee USER_ID|me] [--parent ISSUE_ID] [--state STATE_ID] [--priority N] [--title TEXT] [--description TEXT] [--project PROJECT_ID] [--yes] [--quiet] [--data-only] [--help]
+        \\Usage: linear issue update <ID|IDENTIFIER> [--assignee USER_ID|me] [--parent ISSUE_ID] [--state STATE_ID|NAME] [--priority N] [--title TEXT] [--description TEXT] [--project PROJECT_ID] [--yes] [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --assignee USER_ID|me  Assign to user (use 'me' for current user)
         \\  --parent ISSUE_ID      Set parent issue (make sub-issue)
-        \\  --state STATE_ID       Change workflow state
+        \\  --state STATE_ID|NAME  Change workflow state
         \\  --priority N           Set priority (0-4)
         \\  --title TEXT           Update title
         \\  --description TEXT     Update description
@@ -415,7 +534,7 @@ pub fn usage(writer: anytype) !void {
         \\Examples:
         \\  linear issue update ENG-123 --assignee me --yes
         \\  linear issue update ENG-123 --parent ENG-100 --yes
-        \\  linear issue update ENG-123 --priority 1 --state abc123 --yes
+        \\  linear issue update ENG-123 --priority 1 --state done --yes
         \\
     , .{});
 }

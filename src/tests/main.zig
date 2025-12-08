@@ -48,6 +48,7 @@ const fixtures = struct {
     pub const issue_view_relations = @embedFile("fixtures/issue_view_relations.json");
     pub const issue_view_comments = @embedFile("fixtures/issue_view_comments.json");
     pub const issue_update_response = @embedFile("fixtures/issue_update_response.json");
+    pub const issue_state_lookup_response = @embedFile("fixtures/issue_state_lookup_response.json");
     pub const issue_lookup_response = @embedFile("fixtures/issue_lookup_response.json");
     pub const issue_link_response = @embedFile("fixtures/issue_link_response.json");
     pub const project_create_response = @embedFile("fixtures/project_create_response.json");
@@ -2436,6 +2437,98 @@ test "issue update reports user error" {
 
     try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "permission denied") != null);
+}
+
+test "issue update resolves workflow state name" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueStateLookup", fixtures.issue_state_lookup_response);
+    try server.set("IssueUpdate", fixtures.issue_update_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--state", "done", "--yes", "--quiet" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    const vars_json = recorded.variables_json orelse return error.TestExpectedResult;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, vars_json, .{});
+    defer parsed.deinit();
+    const vars = parsed.value;
+    if (vars != .object) return error.TestExpectedResult;
+    const input = vars.object.get("input") orelse return error.TestExpectedResult;
+    if (input != .object) return error.TestExpectedResult;
+    const state_value = input.object.get("stateId") orelse return error.TestExpectedResult;
+    if (state_value != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("69525da9-b8a9-4f58-a7b9-4187aaf9e02a", state_value.string);
+}
+
+test "issue update reports missing workflow state name" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueStateLookup", fixtures.issue_state_lookup_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runUpdate = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "LIN-123", "--state", "waiting", "--yes" };
+            return issue_update_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runUpdate);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "state 'waiting' not found") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "In Progress") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "Backlog") != null);
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("IssueStateLookup", recorded.operation);
 }
 
 test "issue update data-only json output" {

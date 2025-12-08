@@ -424,6 +424,10 @@ pub fn isValidProjectState(value: []const u8) bool {
         std.ascii.eqlIgnoreCase(value, "canceled");
 }
 
+pub fn looksLikeWorkflowStateId(value: []const u8) bool {
+    return isUuid(value) or isLikelyCuid(value);
+}
+
 fn looksLikeProjectId(value: []const u8) bool {
     return isUuid(value) or std.mem.startsWith(u8, value, "proj_");
 }
