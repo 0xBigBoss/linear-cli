@@ -40,6 +40,7 @@ const fixtures = struct {
     pub const viewer_response = @embedFile("fixtures/viewer.json");
     pub const viewer_table = @embedFile("fixtures/me_table.txt");
     pub const issue_create_team_lookup = @embedFile("fixtures/issue_create_team_lookup.json");
+    pub const team_lookup_empty = @embedFile("fixtures/team_lookup_empty.json");
     pub const issue_create_response = @embedFile("fixtures/issue_create_response.json");
     pub const issue_delete_response = @embedFile("fixtures/issue_delete_response.json");
     pub const issue_delete_lookup = @embedFile("fixtures/issue_delete_lookup.json");
@@ -1187,6 +1188,7 @@ test "issues list renders table and warns about pagination with mock graphql" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", fixtures.issues_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1226,6 +1228,7 @@ test "issues list prints json output with mock graphql" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", fixtures.issues_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1265,6 +1268,7 @@ test "issues list data-only json includes sub-issues and project fields when ena
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", fixtures.issues_with_subs_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1324,6 +1328,7 @@ test "issues list data-only json hides sub-issues when disabled" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", fixtures.issues_with_subs_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1383,6 +1388,7 @@ test "issues list warns when sub-issues truncated" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", fixtures.issues_with_subs_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1421,6 +1427,7 @@ test "issues list paginates across pages when multiple requests allowed" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.setSequence("Issues", &.{ fixtures.issues_response, fixtures.issues_page2_response });
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1462,6 +1469,7 @@ test "issues list quiet prints identifiers only to stdout" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", fixtures.issues_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1500,6 +1508,7 @@ test "issues list honors max-items" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", fixtures.issues_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1539,6 +1548,7 @@ test "issues list applies created-since and project filters" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", fixtures.issues_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1608,6 +1618,7 @@ test "issues list resolves assignee me before applying filter" {
     defer scope.restore();
     try server.setSequence("Viewer", &.{ fixtures.viewer_response, fixtures.viewer_response });
     try server.set("Issues", fixtures.issues_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1668,6 +1679,7 @@ test "issues list warns when sub-issues are truncated" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", fixtures.issues_with_subs_response);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1716,6 +1728,7 @@ test "issues list warns on empty page" {
     var scope = mock_graphql.useServer(&server);
     defer scope.restore();
     try server.set("Issues", empty_payload);
+    try server.set("TeamLookup", fixtures.issue_create_team_lookup);
 
     var cfg = try makeTestConfig(allocator);
     defer cfg.deinit();
@@ -1744,6 +1757,48 @@ test "issues list warns on empty page" {
 
     try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "received empty page") != null);
+}
+
+test "issues list fails when team not found" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("TeamLookup", fixtures.team_lookup_empty);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runIssues = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "--team", "missing-team" };
+            return issues_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runIssues);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expectEqualStrings("", capture.stdout);
+    try std.testing.expectEqualStrings("issues list: team 'missing-team' not found\n", capture.stderr);
+
+    const recorded = server.lastRequest() orelse return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("TeamLookup", recorded.operation);
 }
 
 test "teams list renders table with mock graphql" {

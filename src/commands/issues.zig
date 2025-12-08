@@ -186,6 +186,18 @@ pub fn run(ctx: Context) !u8 {
     client.timeout_ms = ctx.timeout_ms;
     if (ctx.endpoint) |ep| client.endpoint = ep;
 
+    validateTeamSelection(ctx, &client, team_value, stderr) catch |err| switch (err) {
+        error.InvalidTeam => {
+            try stderr.print("issues list: team '{s}' not found\n", .{team_value});
+            return 1;
+        },
+        common.CommandError.CommandFailed => return 1,
+        else => {
+            try stderr.print("issues list: {s}\n", .{@errorName(err)});
+            return 1;
+        },
+    };
+
     var owned_assignee: ?[]const u8 = null;
     defer if (owned_assignee) |value| ctx.allocator.free(value);
     if (opts.assignee) |assignee_raw| {
@@ -624,6 +636,72 @@ pub fn run(ctx: Context) !u8 {
     }
 
     return 0;
+}
+
+fn validateTeamSelection(
+    ctx: Context,
+    client: *graphql.GraphqlClient,
+    team_value: []const u8,
+    stderr: anytype,
+) !void {
+    var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+    defer arena.deinit();
+    const var_alloc = arena.allocator();
+
+    var filter = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var eq_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try eq_obj.object.put("eq", .{ .string = team_value });
+    const filter_key = if (isUuid(team_value)) "id" else "key";
+    try filter.object.put(filter_key, eq_obj);
+
+    var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    try variables.object.put("filter", filter);
+    try variables.object.put("first", .{ .integer = 1 });
+
+    const query =
+        \\query TeamLookup($filter: TeamFilter, $first: Int!) {
+        \\  teams(filter: $filter, first: $first) {
+        \\    nodes { id }
+        \\  }
+        \\}
+    ;
+
+    var response = common.send("issues list", client, ctx.allocator, .{
+        .query = query,
+        .variables = variables,
+        .operation_name = "TeamLookup",
+    }, stderr) catch {
+        return common.CommandError.CommandFailed;
+    };
+    defer response.deinit();
+
+    common.checkResponse("issues list", &response, stderr, client.api_key) catch {
+        return common.CommandError.CommandFailed;
+    };
+
+    const data_value = response.data() orelse {
+        try stderr.print("issues list: response missing data\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    const teams_obj = common.getObjectField(data_value, "teams") orelse {
+        try stderr.print("issues list: teams missing in response\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    const nodes_array = common.getArrayField(teams_obj, "nodes") orelse {
+        try stderr.print("issues list: team nodes missing in response\n", .{});
+        return common.CommandError.CommandFailed;
+    };
+    if (nodes_array.items.len == 0) return error.InvalidTeam;
+
+    const first = nodes_array.items[0];
+    if (first != .object) {
+        try stderr.print("issues list: invalid team payload\n", .{});
+        return common.CommandError.CommandFailed;
+    }
+    if (common.getStringField(first, "id") == null) {
+        try stderr.print("issues list: team id missing in response\n", .{});
+        return common.CommandError.CommandFailed;
+    }
 }
 
 fn buildVariables(
