@@ -1511,7 +1511,9 @@ test "search builds filters for selected fields" {
     try std.testing.expectEqualStrings("TEAM", team_eq.string);
 }
 
-test "search identifier uses case-insensitive comparator by default" {
+// searchableContent uses ContentComparator which only supports "contains",
+// not "containsIgnoreCase" (see GitHub issue #10)
+test "search identifier uses contains (ContentComparator limitation)" {
     const allocator = std.testing.allocator;
 
     var server = mock_graphql.MockServer.init(allocator);
@@ -1574,10 +1576,11 @@ test "search identifier uses case-insensitive comparator by default" {
     const identifier_filter = identifier_entry.object.get("searchableContent") orelse return error.TestExpectedResult;
     if (identifier_filter != .object) return error.TestExpectedResult;
 
-    const identifier_contains_ci = identifier_filter.object.get("containsIgnoreCase") orelse return error.TestExpectedResult;
-    if (identifier_contains_ci != .string) return error.TestExpectedResult;
-    try std.testing.expectEqualStrings("Agent", identifier_contains_ci.string);
-    try std.testing.expect(identifier_filter.object.get("contains") == null);
+    // searchableContent only supports "contains", not "containsIgnoreCase"
+    const identifier_contains = identifier_filter.object.get("contains") orelse return error.TestExpectedResult;
+    if (identifier_contains != .string) return error.TestExpectedResult;
+    try std.testing.expectEqualStrings("Agent", identifier_contains.string);
+    try std.testing.expect(identifier_filter.object.get("containsIgnoreCase") == null);
 }
 
 test "issues list renders table and warns about pagination with mock graphql" {

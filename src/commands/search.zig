@@ -337,7 +337,7 @@ fn appendClause(
 fn appendIdentifierClause(
     allocator: Allocator,
     clauses: *std.json.Array,
-    comparator: []const u8,
+    _: []const u8, // comparator unused; searchableContent only supports "contains"
     query_value: []const u8,
 ) !void {
     if (parseIssueNumber(query_value)) |num| {
@@ -350,8 +350,10 @@ fn appendIdentifierClause(
         return;
     }
 
+    // searchableContent uses ContentComparator which only supports "contains",
+    // not "containsIgnoreCase" (see GitHub issue #10)
     var cmp = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
-    try cmp.object.put(comparator, .{ .string = query_value });
+    try cmp.object.put("contains", .{ .string = query_value });
 
     var entry = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
     try entry.object.put("searchableContent", cmp);
