@@ -27,7 +27,7 @@ const Options = struct {
     help: bool = false,
 };
 
-const SearchField = enum { title, description, comments, identifier };
+const SearchField = enum { title, description, comments };
 const default_fields = [_]SearchField{ .title, .description };
 
 pub fn run(ctx: Context) !u8 {
@@ -239,10 +239,7 @@ fn buildVariables(
     const comparator = if (opts.case_sensitive) "contains" else "containsIgnoreCase";
     var clauses = std.json.Array.init(allocator);
     for (fields) |field| {
-        switch (field) {
-            .identifier => try appendIdentifierClause(allocator, &clauses, comparator, query_value),
-            else => try appendClause(allocator, &clauses, field, comparator, query_value),
-        }
+        try appendClause(allocator, &clauses, field, comparator, query_value);
     }
     if (clauses.items.len == 0) return error.InvalidField;
     try filter.object.put("or", .{ .array = clauses });
@@ -330,51 +327,7 @@ fn appendClause(
             try entry.object.put("comments", comments_obj);
             try clauses.append(entry);
         },
-        .identifier => unreachable, // handled separately
     }
-}
-
-fn appendIdentifierClause(
-    allocator: Allocator,
-    clauses: *std.json.Array,
-    _: []const u8, // comparator unused; searchableContent only supports "contains"
-    query_value: []const u8,
-) !void {
-    if (parseIssueNumber(query_value)) |num| {
-        var eq_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
-        try eq_obj.object.put("eq", .{ .float = num });
-
-        var number_obj = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
-        try number_obj.object.put("number", eq_obj);
-        try clauses.append(number_obj);
-        return;
-    }
-
-    // searchableContent uses ContentComparator which only supports "contains",
-    // not "containsIgnoreCase" (see GitHub issue #10)
-    var cmp = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
-    try cmp.object.put("contains", .{ .string = query_value });
-
-    var entry = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
-    try entry.object.put("searchableContent", cmp);
-    try clauses.append(entry);
-}
-
-fn parseIssueNumber(value: []const u8) ?f64 {
-    const start = blk: {
-        if (std.mem.lastIndexOfScalar(u8, value, '-')) |idx| {
-            const next = idx + 1;
-            if (next >= value.len) break :blk 0;
-            break :blk next;
-        }
-        break :blk 0;
-    };
-    const digits = value[start..];
-    if (digits.len == 0) return null;
-    for (digits) |ch| {
-        if (!std.ascii.isDigit(ch)) return null;
-    }
-    return std.fmt.parseFloat(f64, digits) catch null;
 }
 
 fn parseFields(raw: ?[]const u8, buffer: *std.ArrayListUnmanaged(SearchField), allocator: Allocator) ![]const SearchField {
@@ -398,7 +351,6 @@ fn parseFieldName(name: []const u8) ?SearchField {
     if (std.ascii.eqlIgnoreCase(name, "title")) return .title;
     if (std.ascii.eqlIgnoreCase(name, "description")) return .description;
     if (std.ascii.eqlIgnoreCase(name, "comments")) return .comments;
-    if (std.ascii.eqlIgnoreCase(name, "identifier") or std.ascii.eqlIgnoreCase(name, "id")) return .identifier;
     return null;
 }
 
@@ -542,7 +494,7 @@ pub fn usage(writer: anytype) !void {
         \\Usage: linear search <query> [--team ID|KEY] [--fields LIST] [--state-type TYPES] [--assignee USER_ID|me] [--limit N] [--case-sensitive] [--help]
         \\Flags:
         \\  --team ID|KEY        Restrict search to a team id or key (default: config.default_team_id if set)
-        \\  --fields LIST        Comma-separated fields to search (title,description,comments,identifier)
+        \\  --fields LIST        Comma-separated fields to search (title,description,comments)
         \\  --state-type TYPES   Comma-separated workflow state types to include (default: exclude completed,canceled)
         \\  --assignee USER_ID   Filter by assignee id (use 'me' for the current user)
         \\  --limit N            Maximum results to return (default: 25)
