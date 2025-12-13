@@ -186,20 +186,6 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    if (ctx.json_output and !opts.quiet and !opts.data_only) {
-        var out_buf: [0]u8 = undefined;
-        var out_writer = std.fs.File.stdout().writer(&out_buf);
-        if (reason) |reason_value| {
-            var root_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
-            try root_obj.object.put("response", data_value);
-            try root_obj.object.put("reason", .{ .string = reason_value });
-            try printer.printJson(root_obj, &out_writer.interface, true);
-        } else {
-            try printer.printJson(data_value, &out_writer.interface, true);
-        }
-        return 0;
-    }
-
     const payload = common.getObjectField(data_value, "issueDelete") orelse {
         try stderr.print("issue delete: issueDelete missing in response\n", .{});
         return 1;
@@ -217,6 +203,20 @@ pub fn run(ctx: Context) !u8 {
         }
         try stderr.print("issue delete: request failed\n", .{});
         return 1;
+    }
+
+    if (ctx.json_output and !opts.quiet and !opts.data_only) {
+        var out_buf: [0]u8 = undefined;
+        var out_writer = std.fs.File.stdout().writer(&out_buf);
+        if (reason) |reason_value| {
+            var root_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+            try root_obj.object.put("response", data_value);
+            try root_obj.object.put("reason", .{ .string = reason_value });
+            try printer.printJson(root_obj, &out_writer.interface, true);
+        } else {
+            try printer.printJson(data_value, &out_writer.interface, true);
+        }
+        return 0;
     }
 
     const identifier = if (issue_obj) |issue|

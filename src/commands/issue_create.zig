@@ -156,13 +156,6 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    if (ctx.json_output and !opts.quiet and !opts.data_only) {
-        var out_buf: [0]u8 = undefined;
-        var out_writer = std.fs.File.stdout().writer(&out_buf);
-        try printer.printJson(data_value, &out_writer.interface, true);
-        return 0;
-    }
-
     const payload = common.getObjectField(data_value, "issueCreate") orelse {
         try stderr.print("issue create: issueCreate missing in response\n", .{});
         return 1;
@@ -193,6 +186,13 @@ pub fn run(ctx: Context) !u8 {
         try stderr.print("issue create: issue missing in response\n", .{});
         return 1;
     };
+
+    if (ctx.json_output and !opts.quiet and !opts.data_only) {
+        var out_buf: [0]u8 = undefined;
+        var out_writer = std.fs.File.stdout().writer(&out_buf);
+        try printer.printJson(data_value, &out_writer.interface, true);
+        return 0;
+    }
 
     const identifier = common.getStringField(issue, "identifier") orelse "(unknown)";
     const title_value = common.getStringField(issue, "title") orelse opts.title.?;

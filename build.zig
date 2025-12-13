@@ -231,6 +231,26 @@ pub fn build(b: *std.Build) void {
     issue_link_test_mod.addImport("common", common_test_mod);
     tests_mod.addImport("issue_link_test", issue_link_test_mod);
 
+    const issue_comment_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/issue_comment.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    issue_comment_mod.addImport("config", config_mod);
+    issue_comment_mod.addImport("graphql", graphql_mod);
+    issue_comment_mod.addImport("printer", printer_mod);
+    issue_comment_mod.addImport("common", common_mod);
+    const issue_comment_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/issue_comment.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    issue_comment_test_mod.addImport("config", config_mod);
+    issue_comment_test_mod.addImport("graphql", graphql_mock_mod);
+    issue_comment_test_mod.addImport("printer", printer_mod);
+    issue_comment_test_mod.addImport("common", common_test_mod);
+    tests_mod.addImport("issue_comment_test", issue_comment_test_mod);
+
     const issue_view_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/issue_view.zig"),
         .target = target,
@@ -470,6 +490,7 @@ pub fn build(b: *std.Build) void {
     online_tests.root_module.addImport("issue_view_cmd", issue_view_online_mod);
     online_tests.root_module.addImport("issue_create_cmd", issue_create_mod);
     online_tests.root_module.addImport("issue_delete_cmd", issue_delete_mod);
+    online_tests.root_module.addImport("issue_comment_cmd", issue_comment_mod);
     online_tests.root_module.addImport("me_cmd", me_online_mod);
     online_tests.root_module.addImport("gql_cmd", gql_mod);
     online_tests.root_module.addImport("projects_cmd", projects_online_mod);

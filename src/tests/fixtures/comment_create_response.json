@@ -1,0 +1,15 @@
+{
+  "data": {
+    "commentCreate": {
+      "success": true,
+      "comment": {
+        "id": "comment-1",
+        "body": "Test comment body",
+        "url": "https://linear.app/test/issue/ENG-123#comment-1",
+        "issue": {
+          "identifier": "ENG-123"
+        }
+      }
+    }
+  }
+}

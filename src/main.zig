@@ -15,6 +15,7 @@ const issue_create_command = @import("commands/issue_create.zig");
 const issue_delete_command = @import("commands/issue_delete.zig");
 const issue_update_command = @import("commands/issue_update.zig");
 const issue_link_command = @import("commands/issue_link.zig");
+const issue_comment_command = @import("commands/issue_comment.zig");
 const search_command = @import("commands/search.zig");
 const projects_command = @import("commands/projects.zig");
 const project_view_command = @import("commands/project_view.zig");
@@ -241,7 +242,7 @@ fn run() !u8 {
 
     if (std.mem.eql(u8, subcommand, "issue")) {
         if (sub_args.len == 0) {
-            try stderr.print("issue: expected 'view', 'create', 'update', 'delete', or 'link'\n", .{});
+            try stderr.print("issue: expected 'view', 'create', 'update', 'delete', 'link', or 'comment'\n", .{});
             try printUsage(stderr);
             return 1;
         }
@@ -293,6 +294,17 @@ fn run() !u8 {
         }
         if (std.mem.eql(u8, issue_sub, "link")) {
             return issue_link_command.run(.{
+                .allocator = allocator,
+                .config = &cfg,
+                .args = issue_args,
+                .json_output = json_output,
+                .retries = opts.retries,
+                .timeout_ms = opts.timeout_ms,
+                .endpoint = opts.endpoint,
+            });
+        }
+        if (std.mem.eql(u8, issue_sub, "comment")) {
+            return issue_comment_command.run(.{
                 .allocator = allocator,
                 .config = &cfg,
                 .args = issue_args,
@@ -521,6 +533,10 @@ fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
                 try issue_link_command.usage(out);
                 return 0;
             }
+            if (std.mem.eql(u8, tail[0], "comment")) {
+                try issue_comment_command.usage(out);
+                return 0;
+            }
         }
         try issue_view_command.usage(out);
         try out.writeByte('\n');
@@ -531,6 +547,8 @@ fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
         try issue_delete_command.usage(out);
         try out.writeByte('\n');
         try issue_link_command.usage(out);
+        try out.writeByte('\n');
+        try issue_comment_command.usage(out);
         return 0;
     }
 
@@ -555,7 +573,7 @@ fn printUsage(writer: anytype) !void {
         \\  search               Search issues by keyword
         \\  projects list        List projects
         \\  issues list          List issues
-        \\  issue view|create|update|delete|link  Manage issues
+        \\  issue view|create|update|delete|link|comment  Manage issues
         \\  project view|create|update|delete|add-issue|remove-issue  Manage projects
         \\  gql                  Run an arbitrary GraphQL query against Linear
         \\

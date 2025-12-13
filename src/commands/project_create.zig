@@ -141,13 +141,6 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    if (ctx.json_output and !opts.quiet and !opts.data_only) {
-        var out_buf: [0]u8 = undefined;
-        var out_writer = std.fs.File.stdout().writer(&out_buf);
-        try printer.printJson(data_value, &out_writer.interface, true);
-        return 0;
-    }
-
     const payload = common.getObjectField(data_value, "projectCreate") orelse {
         try stderr.print("project create: projectCreate missing in response\n", .{});
         return 1;
@@ -177,6 +170,13 @@ pub fn run(ctx: Context) !u8 {
         try stderr.print("project create: project missing in response\n", .{});
         return 1;
     };
+
+    if (ctx.json_output and !opts.quiet and !opts.data_only) {
+        var out_buf: [0]u8 = undefined;
+        var out_writer = std.fs.File.stdout().writer(&out_buf);
+        try printer.printJson(data_value, &out_writer.interface, true);
+        return 0;
+    }
 
     const id = common.getStringField(project, "id") orelse "(unknown)";
     const name = common.getStringField(project, "name") orelse opts.name.?;

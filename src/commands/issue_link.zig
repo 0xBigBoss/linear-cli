@@ -160,13 +160,6 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     };
 
-    if (ctx.json_output and !opts.quiet and !opts.data_only) {
-        var out_buf: [0]u8 = undefined;
-        var out_writer = std.fs.File.stdout().writer(&out_buf);
-        try printer.printJson(data_value, &out_writer.interface, true);
-        return 0;
-    }
-
     const payload = common.getObjectField(data_value, "issueRelationCreate") orelse {
         try stderr.print("issue link: issueRelationCreate missing in response\n", .{});
         return 1;
@@ -196,6 +189,13 @@ pub fn run(ctx: Context) !u8 {
         try stderr.print("issue link: issueRelation missing in response\n", .{});
         return 1;
     };
+
+    if (ctx.json_output and !opts.quiet and !opts.data_only) {
+        var out_buf: [0]u8 = undefined;
+        var out_writer = std.fs.File.stdout().writer(&out_buf);
+        try printer.printJson(data_value, &out_writer.interface, true);
+        return 0;
+    }
 
     const relation_id = common.getStringField(relation_obj, "id") orelse "(unknown)";
     const type_value = common.getStringField(relation_obj, "type") orelse relation_type_str;

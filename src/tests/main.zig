@@ -18,6 +18,7 @@ const issue_view_cmd = @import("issue_view_test");
 const issue_delete_cmd = @import("issue_delete_test");
 const issue_update_cmd = @import("issue_update_test");
 const issue_link_cmd = @import("issue_link_test");
+const issue_comment_cmd = @import("issue_comment_test");
 const me_cmd = @import("me_test");
 const teams_cmd = @import("teams_test");
 const projects_cmd = @import("projects_test");
@@ -61,6 +62,7 @@ const fixtures = struct {
     pub const project_add_issue_response = @embedFile("fixtures/project_add_issue_response.json");
     pub const project_remove_issue_response = @embedFile("fixtures/project_remove_issue_response.json");
     pub const project_statuses_response = @embedFile("fixtures/project_statuses_response.json");
+    pub const comment_create_response = @embedFile("fixtures/comment_create_response.json");
 };
 
 test "config save and load roundtrip" {
@@ -4390,6 +4392,249 @@ test "graphql client uses configured keep alive setting" {
     defer client.deinit();
 
     try std.testing.expect(!client.keep_alive);
+}
+
+test "issue comment succeeds with body" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueLookup", fixtures.issue_lookup_response);
+    try server.set("CommentCreate", fixtures.comment_create_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runComment = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "ENG-123", "--body", "Test comment", "--yes" };
+            return issue_comment_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runComment);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "ENG-123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stdout, "comment-1") != null);
+}
+
+test "issue comment reports user error" {
+    const allocator = std.testing.allocator;
+    const user_error =
+        \\{
+        \\  "data": {
+        \\    "commentCreate": {
+        \\      "success": false,
+        \\      "comment": null,
+        \\      "userError": "permission denied"
+        \\    }
+        \\  }
+        \\}
+    ;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueLookup", fixtures.issue_lookup_response);
+    try server.set("CommentCreate", user_error);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runComment = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "ENG-123", "--body", "Test comment", "--yes" };
+            return issue_comment_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runComment);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "permission denied") != null);
+}
+
+test "issue comment fails with json output when success is false" {
+    const allocator = std.testing.allocator;
+    const user_error =
+        \\{
+        \\  "data": {
+        \\    "commentCreate": {
+        \\      "success": false,
+        \\      "comment": null,
+        \\      "userError": "rate limited"
+        \\    }
+        \\  }
+        \\}
+    ;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueLookup", fixtures.issue_lookup_response);
+    try server.set("CommentCreate", user_error);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runComment = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "ENG-123", "--body", "Test comment", "--yes" };
+            return issue_comment_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = true,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runComment);
+    defer capture.deinit(allocator);
+
+    // Key assertion: even with json_output=true, exit code is 1 when success is false
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "rate limited") != null);
+}
+
+test "issue comment requires confirmation" {
+    const allocator = std.testing.allocator;
+
+    var server = mock_graphql.MockServer.init(allocator);
+    defer server.deinit();
+    var scope = mock_graphql.useServer(&server);
+    defer scope.restore();
+    try server.set("IssueLookup", fixtures.issue_lookup_response);
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runComment = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "ENG-123", "--body", "Test comment" };
+            return issue_comment_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runComment);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "confirmation required") != null);
+}
+
+test "issue comment requires body or body-file" {
+    const allocator = std.testing.allocator;
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runComment = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "ENG-123", "--yes" };
+            return issue_comment_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runComment);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "--body or --body-file is required") != null);
+}
+
+test "issue comment rejects both body and body-file" {
+    const allocator = std.testing.allocator;
+
+    var cfg = try makeTestConfig(allocator);
+    defer cfg.deinit();
+
+    const Runner = struct {
+        allocator: std.mem.Allocator,
+        cfg: *config.Config,
+    };
+    const runComment = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "ENG-123", "--body", "text", "--body-file", "file.md", "--yes" };
+            return issue_comment_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = 10_000,
+                .json_output = false,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+
+    const capture = try captureOutput(allocator, &runner, runComment);
+    defer capture.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "cannot use both --body and --body-file") != null);
 }
 
 test "online viewer smoke (env gated)" {

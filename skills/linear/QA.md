@@ -76,6 +76,7 @@ Verify each command in the table works:
 - [ ] `linear issue create` (with required flags)
 - [ ] `linear issue update ID` (with at least one field)
 - [ ] `linear issue link ID` (with relation flag - accepts TEAM-NUMBER or UUID)
+- [ ] `linear issue comment ID --body "text" --yes`
 - [ ] `linear issue delete ID` (dry-run first)
 - [ ] `linear teams list`
 - [ ] `linear me`
@@ -131,6 +132,16 @@ Test issue linking functionality (accepts TEAM-NUMBER identifiers or UUIDs):
 - [ ] `linear issue link ENG-123 --blocks A --related B --yes` → error "only one of --blocks"
 - [ ] `linear issue link UUID --blocks UUID --yes` - UUIDs still work directly
 
+### Phase 6b: Issue Comment Command
+Test issue comment functionality:
+- [ ] `linear issue comment ENG-123 --body "Test comment" --yes` - creates comment with inline text
+- [ ] `echo "Multi-line\ncomment" | linear issue comment ENG-123 --body-file - --yes` - creates comment from stdin
+- [ ] `linear issue comment ENG-123 --body "text" --yes --json` - JSON output shows comment id and url
+- [ ] `linear issue comment ENG-123 --body "text" --yes --quiet` - only outputs comment id
+- [ ] `linear issue comment ENG-123 --yes` (no body) → error "--body or --body-file is required"
+- [ ] `linear issue comment ENG-123 --body "x" --body-file y --yes` → error "cannot use both"
+- [ ] `linear issue comment ENG-123 --body "text"` (no --yes) → error "confirmation required"
+
 ### Phase 7: Hygiene Section
 Verify hygiene examples from SKILL.md work:
 - [ ] Assignment workflow: `linear issue update ENG-123 --assignee me --yes` (identifiers work for main ID)
@@ -141,10 +152,10 @@ Verify hygiene examples from SKILL.md work:
 Test at least these recipes:
 - [ ] Viewer query: `echo 'query { viewer { id name } }' | linear gql --json`
 - [ ] Teams query: `echo 'query { teams { nodes { id key } } }' | linear gql --json`
-- [ ] Add comment (commentCreate) - on a test issue
 - [ ] Attach URL (attachmentCreate) - on a test issue
 
 Note: Link issues and set parent are now covered by direct CLI commands in Phases 5-6.
+Note: Adding comments is now covered by `linear issue comment` in Phase 6b.
 
 ### Phase 8b: File Upload (Critical Path)
 This tests the three-step file upload process which agents often get wrong:
