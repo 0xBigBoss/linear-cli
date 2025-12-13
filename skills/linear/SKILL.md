@@ -88,6 +88,14 @@ linear config set default_output json
 linear config unset default_state_filter
 ```
 
+### Add a comment to an issue
+```bash
+linear issue comment ENG-123 --body "Comment text here" --yes
+
+# Or from a file/stdin
+cat notes.md | linear issue comment ENG-123 --body-file - --yes
+```
+
 ### Create and manage a project
 ```bash
 # Create project (team UUID required)
@@ -110,6 +118,7 @@ linear project add-issue PROJECT_ID ISSUE_UUID --yes
 | `linear issue create` | Create new issue |
 | `linear issue update ID` | Update issue (assign, state, priority, parent*) |
 | `linear issue link ID` | Link issues (blocks, related, duplicate) |
+| `linear issue comment ID` | Add comment to issue |
 | `linear issue delete ID` | Archive an issue |
 | `linear projects list` | List projects |
 | `linear project view ID` | View project details |
@@ -168,9 +177,8 @@ For operations not covered by built-in commands, use `linear gql` with GraphQL:
 
 - **Add attachments** - See `graphql-recipes.md` → "Attach URL to Issue"
 - **Upload files** - See `graphql-recipes.md` → "Upload File"
-- **Add comments** - See `graphql-recipes.md` → "Add Comment"
 
-Note: Setting parent is available via `issue update --parent`, but requires UUIDs. Use `linear issue view ID --json` to get UUIDs.
+Note: Adding comments is now available via `linear issue comment`. Setting parent is available via `issue update --parent`, but requires UUIDs. Use `linear issue view ID --json` to get UUIDs.
 
 ## Finding IDs
 
