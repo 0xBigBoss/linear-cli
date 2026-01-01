@@ -189,7 +189,7 @@ Note: Adding comments is now available via `linear issue comment`. Setting paren
 linear issue view ENG-123 --json | jq -r '.issue.id'
 
 # Current user UUID
-linear me --json | jq -r '.id'
+linear me --json | jq -r '.viewer.id'
 
 # All teams with UUIDs
 linear teams list --json
@@ -199,6 +199,50 @@ linear issue view ENG-123 --json
 ```
 
 Or in Linear app: Cmd/Ctrl+K → "Copy model UUID"
+
+## JSON Output Structures
+
+Commands with `--json` return nested structures. Use these jq paths:
+
+| Command | Root path | Items path |
+|---------|-----------|------------|
+| `issue view ID` | `.issue` | N/A (single object) |
+| `issue view ID --fields ...` | `.` | N/A (flat object of selected fields) |
+| `issues list` | `.issues` | `.issues.nodes[]` |
+| `project view ID` | `.project` | N/A (single object) |
+| `projects list` | `.projects` | `.projects.nodes[]` |
+| `teams list` | `.teams` | `.teams.nodes[]` |
+| `me` | `.viewer` | N/A (single object) |
+| `search` | `.issues` | `.issues.nodes[]` |
+
+**Null handling:** Many fields can be null (name, description, dates, assignee). Use null-safe filters.
+
+### jq Patterns
+
+```bash
+# List all projects (correct path)
+linear projects list --json | jq '.projects.nodes[]'
+
+# Filter projects by name (null-safe)
+linear projects list --json | jq '.projects.nodes[] | select(.name) | select(.name | ascii_downcase | contains("keyword"))'
+
+# Get project names as array
+linear projects list --json | jq '[.projects.nodes[].name]'
+
+# Filter issues by title
+linear issues list --team TEAM --json | jq '.issues.nodes[] | select(.title | ascii_downcase | contains("bug"))'
+
+# Extract specific fields
+linear issues list --team TEAM --json | jq '.issues.nodes[] | {id: .identifier, title, state: .state.name}'
+
+# Get issue UUID from identifier
+linear issue view ENG-123 --json | jq -r '.issue.id'
+```
+
+**Common mistakes:**
+- `.[]` on root - use `.projects.nodes[]` or `.issues.nodes[]`
+- `test("pattern"; "i")` on null - filter nulls first with `select(.field)`
+- Escaping `!=` in shells - use `select(.field)` instead of `select(.field != null)`
 
 ## Reference Files
 
