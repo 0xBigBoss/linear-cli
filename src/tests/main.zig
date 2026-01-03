@@ -792,6 +792,27 @@ test "parse issues options" {
     try std.testing.expect(opts.data_only);
 }
 
+test "normalize state type aliases" {
+    // in_progress variations map to started
+    try std.testing.expectEqualStrings("started", issues_cmd.normalizeStateType("in_progress"));
+    try std.testing.expectEqualStrings("started", issues_cmd.normalizeStateType("in-progress"));
+    try std.testing.expectEqualStrings("started", issues_cmd.normalizeStateType("inprogress"));
+    try std.testing.expectEqualStrings("started", issues_cmd.normalizeStateType("IN_PROGRESS"));
+    try std.testing.expectEqualStrings("started", issues_cmd.normalizeStateType("In-Progress"));
+
+    // todo maps to unstarted
+    try std.testing.expectEqualStrings("unstarted", issues_cmd.normalizeStateType("todo"));
+    try std.testing.expectEqualStrings("unstarted", issues_cmd.normalizeStateType("TODO"));
+
+    // canonical values pass through unchanged
+    try std.testing.expectEqualStrings("started", issues_cmd.normalizeStateType("started"));
+    try std.testing.expectEqualStrings("unstarted", issues_cmd.normalizeStateType("unstarted"));
+    try std.testing.expectEqualStrings("backlog", issues_cmd.normalizeStateType("backlog"));
+    try std.testing.expectEqualStrings("triage", issues_cmd.normalizeStateType("triage"));
+    try std.testing.expectEqualStrings("completed", issues_cmd.normalizeStateType("completed"));
+    try std.testing.expectEqualStrings("canceled", issues_cmd.normalizeStateType("canceled"));
+}
+
 test "parse issue create options" {
     const args = [_][]const u8{ "--team", "team-1", "--title", "hello", "--priority", "2", "--labels", "a,b", "--quiet", "--data-only" };
     const opts = try issue_create_cmd.parseOptions(args[0..]);

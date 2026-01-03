@@ -351,6 +351,48 @@ test "online issues list succeeds without sub-issues" {
     if (page_info != .object) return error.TestExpectedResult;
 }
 
+test "online issues list filters by state-type with alias" {
+    const allocator = std.testing.allocator;
+    var env = loadEnv(allocator);
+    defer env.deinit(allocator);
+    if (!env.enabled) return;
+
+    var cfg = try makeConfig(allocator, &env);
+    defer cfg.deinit();
+    defer graphql.deinitSharedClient();
+
+    // Test that in_progress alias maps to started and doesn't error
+    const Runner = struct {
+        allocator: Allocator,
+        cfg: *config.Config,
+    };
+    const runIssues = struct {
+        pub fn call(r: *const Runner) !u8 {
+            var args = [_][]const u8{ "--limit", "1", "--sub-limit", "0", "--state-type", "in_progress,started" };
+            return issues_cmd.run(.{
+                .allocator = r.allocator,
+                .config = r.cfg,
+                .args = args[0..],
+                .retries = 0,
+                .timeout_ms = default_timeout_ms,
+                .json_output = true,
+            });
+        }
+    }.call;
+    const runner = Runner{ .allocator = allocator, .cfg = &cfg };
+    const capture = try captureOutput(allocator, &runner, runIssues);
+    defer capture.deinit(allocator);
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, capture.stdout, .{});
+    defer parsed.deinit();
+    const root = parsed.value;
+    if (root != .object) return error.TestExpectedResult;
+    const issues_value = root.object.get("issues") orelse return error.TestExpectedResult;
+    if (issues_value != .object) return error.TestExpectedResult;
+    // If we got here without error, the state-type filter worked (in_progress was mapped to started)
+}
+
 test "online issues list includes relation fields when enabled" {
     const allocator = std.testing.allocator;
     var env = loadEnv(allocator);

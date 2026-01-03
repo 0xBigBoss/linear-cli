@@ -737,7 +737,7 @@ fn buildVariables(
     const has_state_type = opts.state_type != null;
     const has_state_id = opts.state_id != null;
     if (has_state_type) {
-        const state_values = parseCsvValues(allocator, opts.state_type.?) catch |err| switch (err) {
+        const state_values = parseStateTypeCsvValues(allocator, opts.state_type.?) catch |err| switch (err) {
             error.EmptyList => return error.InvalidStateFilter,
             else => return err,
         };
@@ -884,6 +884,38 @@ fn isUuid(value: []const u8) bool {
         if (value[idx] != '-') return false;
     }
     return true;
+}
+
+/// Maps user-friendly state type aliases to Linear API values.
+/// Linear API expects: triage, backlog, unstarted, started, completed, canceled
+pub fn normalizeStateType(value: []const u8) []const u8 {
+    // Map common aliases to API values
+    if (std.ascii.eqlIgnoreCase(value, "in_progress") or
+        std.ascii.eqlIgnoreCase(value, "in-progress") or
+        std.ascii.eqlIgnoreCase(value, "inprogress"))
+    {
+        return "started";
+    }
+    if (std.ascii.eqlIgnoreCase(value, "todo")) {
+        return "unstarted";
+    }
+    // Pass through canonical values unchanged
+    return value;
+}
+
+fn parseStateTypeCsvValues(allocator: Allocator, raw: []const u8) !std.json.Array {
+    var values = std.json.Array.init(allocator);
+    var iter = std.mem.tokenizeScalar(u8, raw, ',');
+    var added: usize = 0;
+    while (iter.next()) |entry| {
+        const trimmed = std.mem.trim(u8, entry, " \t");
+        if (trimmed.len == 0) continue;
+        const normalized = normalizeStateType(trimmed);
+        try values.append(.{ .string = normalized });
+        added += 1;
+    }
+    if (added == 0) return error.EmptyList;
+    return values;
 }
 
 pub fn parseOptions(args: []const []const u8) !Options {
@@ -1129,7 +1161,9 @@ pub fn usage(writer: anytype) !void {
         \\Usage: linear issues list [--team ID|KEY] [--state-type TYPES] [--state-id IDS] [--assignee USER_ID] [--label IDS] [--project ID] [--milestone ID] [--updated-since TS] [--sort FIELD[:asc|desc]] [--limit N] [--max-items N] [--sub-limit N] [--cursor CURSOR] [--pages N|--all] [--fields LIST] [--include-projects] [--plain] [--no-truncate] [--human-time] [--quiet] [--data-only] [--help]
         \\Flags:
         \\  --team ID|KEY         Team id or key (default: config.default_team_id)
-        \\  --state-type VALUES   Comma-separated state types to include (alias: --state; default: exclude completed,canceled)
+        \\  --state-type VALUES   Comma-separated state types: triage,backlog,unstarted,started,completed,canceled
+        \\                        (aliases: in_progress/in-progress -> started, todo -> unstarted)
+        \\                        (alias: --state; default: exclude completed,canceled)
         \\  --state-id IDS        Comma-separated workflow state ids to include (overrides default exclusion)
         \\  --assignee USER_ID    Filter by assignee id
         \\  --label IDS           Comma-separated label ids to include
