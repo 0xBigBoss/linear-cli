@@ -7,3 +7,6 @@ zig-out/
 
 # Built binaries in npm packages (created during CI/release)
 npm/*/linear
+
+# Claude Code state files
+.claude/ralph-loop.local.md

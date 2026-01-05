@@ -428,7 +428,7 @@ test "config command validates team selection" {
     try std.testing.expectEqualStrings("team-id-1", persisted);
 }
 
-test "config command rejects unknown team" {
+test "config command warns on unknown team but still sets value" {
     const allocator = std.testing.allocator;
 
     var server = mock_graphql.MockServer.init(allocator);
@@ -470,9 +470,9 @@ test "config command rejects unknown team" {
     const capture = try captureOutput(allocator, &runner, runConfig);
     defer capture.deinit(allocator);
 
-    try std.testing.expectEqual(@as(u8, 1), capture.exit_code);
-    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "team 'MISSING' not found") != null);
-    try std.testing.expectEqual(@as(usize, 0), cfg.default_team_id.len);
+    try std.testing.expectEqual(@as(u8, 0), capture.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, capture.stderr, "warning: team 'MISSING' not found") != null);
+    try std.testing.expectEqualStrings("MISSING", cfg.default_team_id);
 }
 
 test "config command unsets state filter" {

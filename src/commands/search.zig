@@ -169,6 +169,11 @@ pub fn run(ctx: Context) !u8 {
     const has_next = if (page_info) |pi| common.getBoolField(pi, "hasNextPage") orelse false else false;
     const end_cursor = if (page_info) |pi| common.getStringField(pi, "endCursor") else null;
 
+    const trimmed_team = std.mem.trim(u8, team_value, " \t");
+    if (nodes_array.items.len == 0 and trimmed_team.len > 0) {
+        try stderr.print("search: 0 results (team filter: {s})\n", .{trimmed_team});
+    }
+
     if (ctx.json_output) {
         var out_buf: [0]u8 = undefined;
         var out_writer = std.fs.File.stdout().writer(&out_buf);

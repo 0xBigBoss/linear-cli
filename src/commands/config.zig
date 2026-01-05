@@ -166,10 +166,6 @@ fn runSet(ctx: Context, args: [][]const u8) !u8 {
     };
     save_result catch |err| switch (err) {
         error.InvalidValue => return 1,
-        error.InvalidTeam => {
-            try stderr.print("config set: team '{s}' not found\n", .{trimmed_value});
-            return 1;
-        },
         common.CommandError.CommandFailed => return 1,
         else => {
             try stderr.print("config set: {s}\n", .{@errorName(err)});
@@ -269,7 +265,9 @@ fn setDefaultTeam(ctx: Context, value: []const u8, stderr: anytype) !void {
     if (ctx.endpoint) |ep| client.endpoint = ep;
 
     validateTeamSelection(ctx, &client, value, stderr) catch |err| switch (err) {
-        error.InvalidTeam => return error.InvalidTeam,
+        error.InvalidTeam => {
+            try stderr.print("config set: warning: team '{s}' not found in workspace\n", .{value});
+        },
         else => return common.CommandError.CommandFailed,
     };
 
