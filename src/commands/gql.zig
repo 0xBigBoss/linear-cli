@@ -18,6 +18,7 @@ pub const Context = struct {
 
 const Options = struct {
     query_path: ?[]const u8 = null,
+    inline_query: ?[]const u8 = null,
     vars_json: ?[]const u8 = null,
     vars_file: ?[]const u8 = null,
     data_only: bool = false,
@@ -48,14 +49,20 @@ pub fn run(ctx: Context) !u8 {
         return 1;
     }
 
+    if (opts.query_path != null and opts.inline_query != null) {
+        try stderr.print("gql: cannot use both --query and inline query argument\n", .{});
+        return 1;
+    }
+
     const api_key = ctx.config.resolveApiKey(null) catch |err| {
         try stderr.print("gql: {s}\n", .{@errorName(err)});
         try stderr.print("set LINEAR_API_KEY or configure api_key in the config file\n", .{});
         return 1;
     };
 
-    const query = try loadQuery(ctx.allocator, opts.query_path);
-    defer ctx.allocator.free(query);
+    const query_result = try loadQuery(ctx.allocator, opts.query_path, opts.inline_query);
+    const query = query_result.data;
+    defer if (query_result.owned) ctx.allocator.free(query);
 
     var vars_parsed: ?std.json.Parsed(std.json.Value) = null;
     defer {
@@ -235,7 +242,10 @@ pub fn parseOptions(args: []const []const u8) !Options {
         }
 
         if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
-        return error.UnexpectedArgument;
+        // Positional argument: treat as inline query
+        if (opts.inline_query != null) return error.UnexpectedArgument;
+        opts.inline_query = arg;
+        idx += 1;
     }
 
     return opts;
@@ -255,13 +265,22 @@ fn parseFields(raw: ?[]const u8, buffer: *std.ArrayListUnmanaged([]const u8), al
     return null;
 }
 
-fn loadQuery(allocator: Allocator, path: ?[]const u8) ![]u8 {
+const QueryResult = struct {
+    data: []const u8,
+    owned: bool,
+};
+
+fn loadQuery(allocator: Allocator, path: ?[]const u8, inline_query: ?[]const u8) !QueryResult {
     if (path) |query_path| {
-        return readFile(allocator, query_path);
+        return .{ .data = try readFile(allocator, query_path), .owned = true };
+    }
+
+    if (inline_query) |q| {
+        return .{ .data = q, .owned = false };
     }
 
     var reader = std.fs.File.stdin().deprecatedReader();
-    return reader.readAllAlloc(allocator, 1024 * 1024);
+    return .{ .data = try reader.readAllAlloc(allocator, 1024 * 1024), .owned = true };
 }
 
 fn readFile(allocator: Allocator, path: []const u8) ![]u8 {
@@ -272,7 +291,11 @@ fn readFile(allocator: Allocator, path: []const u8) ![]u8 {
 
 pub fn usage(writer: anytype) !void {
     try writer.writeAll(
-        \\Usage: linear gql [--query FILE] [--vars JSON|--vars-file FILE] [--data-only] [--operation-name NAME] [--fields LIST] [--help]
+        \\Usage: linear gql [QUERY] [--query FILE] [--vars JSON|--vars-file FILE] [--data-only] [--operation-name NAME] [--fields LIST] [--help]
+        \\
+        \\Arguments:
+        \\  QUERY                 Inline GraphQL query string (alternative to --query or stdin)
+        \\
         \\Flags:
         \\  --query FILE          Read GraphQL query from a file (default: stdin)
         \\  --vars JSON           Inline JSON variables
@@ -284,9 +307,11 @@ pub fn usage(writer: anytype) !void {
         \\
         \\Environment:
         \\  LINEAR_API_KEY        Overrides api_key from config when present
+        \\
         \\Examples:
-        \\  linear gql --query query.graphql --vars '{\"id\":\"abc\"}'
-        \\  echo \"query { viewer { id } }\" | linear gql --data-only --json
+        \\  linear gql 'query { viewer { id } }' --data-only --json
+        \\  linear gql --query query.graphql --vars '{"id":"abc"}'
+        \\  echo "query { viewer { id } }" | linear gql --data-only --json
         \\
     );
 }
