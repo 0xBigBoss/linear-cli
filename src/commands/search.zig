@@ -246,6 +246,16 @@ fn buildVariables(
     for (fields) |field| {
         try appendClause(allocator, &clauses, field, comparator, query_value);
     }
+
+    // If query looks like an identifier (e.g., "SEND-53"), also match by issue number
+    if (parseIdentifierNumber(query_value)) |issue_number| {
+        var num_cmp = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+        try num_cmp.object.put("eq", .{ .integer = issue_number });
+        var num_entry = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+        try num_entry.object.put("number", num_cmp);
+        try clauses.append(num_entry);
+    }
+
     if (clauses.items.len == 0) return error.InvalidField;
     try filter.object.put("or", .{ .array = clauses });
 
@@ -387,6 +397,28 @@ fn isUuid(value: []const u8) bool {
         if (value[idx] != '-') return false;
     }
     return true;
+}
+
+/// Parse issue number from identifier (e.g., "SEND-53" -> 53, "ENG-123" -> 123)
+/// Returns null if value doesn't look like an identifier.
+fn parseIdentifierNumber(value: []const u8) ?i64 {
+    // Must have at least "X-1" (3 chars)
+    if (value.len < 3) return null;
+
+    // Find the hyphen
+    const hyphen_pos = std.mem.indexOfScalar(u8, value, '-') orelse return null;
+
+    // Must have at least one char before and after hyphen
+    if (hyphen_pos == 0 or hyphen_pos == value.len - 1) return null;
+
+    // Prefix must be uppercase letters only
+    for (value[0..hyphen_pos]) |c| {
+        if (!std.ascii.isUpper(c)) return null;
+    }
+
+    // Suffix must be digits only - parse as number
+    const number_str = value[hyphen_pos + 1 ..];
+    return std.fmt.parseInt(i64, number_str, 10) catch null;
 }
 
 fn resolveCurrentUserId(ctx: Context, client: *graphql.GraphqlClient, allocator: Allocator, stderr: anytype) ![]const u8 {
