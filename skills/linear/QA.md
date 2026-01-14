@@ -88,6 +88,7 @@ Verify each command in the table works:
 - [ ] `linear project update ID|SLUG --state started --yes`
 - [ ] `linear project delete ID|SLUG --yes`
 - [ ] `linear project add-issue PROJECT_ID ISSUE_ID --yes` / `remove-issue` with --yes
+- [ ] `linear download URL --output FILE` - downloads uploads.linear.app files
 
 ### Phase 3: Common Flags
 - [ ] `--json` produces valid JSON
@@ -95,6 +96,7 @@ Verify each command in the table works:
 - [ ] `--human-time` shows relative times
 - [ ] `--fields LIST` filters output
 - [ ] `--help` shows usage
+- [ ] `--attachment-dir DIR` downloads uploads to DIR (issue view only; "" disables)
 
 ### Phase 3b: Search Command Coverage
 - [ ] `linear search "keyword" --team TEAM_KEY --limit 5` (table output)
@@ -184,6 +186,31 @@ Common failure modes to verify against:
 - Using wrong Content-Type header in PUT request
 - Not waiting for signed URL before uploading
 - Using uploadUrl instead of assetUrl in attachments
+
+### Phase 8c: Download Attachments
+Test the download command and issue view attachment handling:
+
+1. Download a file uploaded in Phase 8b:
+   - [ ] `linear download "ASSET_URL" --output /tmp/downloaded.txt` - downloads with auth
+   - [ ] `cat /tmp/downloaded.txt` - verify content matches uploaded file
+   - [ ] `linear download "ASSET_URL"` - derives filename from URL (saves to cwd)
+   - [ ] `linear download "ASSET_URL" --output -` - outputs to stdout
+
+2. Test invalid URLs:
+   - [ ] `linear download "https://example.com/file.txt"` → error "invalid upload URL"
+   - [ ] `linear download` (no URL) → error "missing URL"
+
+3. Test issue view attachment auto-download:
+   - [ ] Update test issue description to include an `uploads.linear.app` URL
+   - [ ] `linear issue view IDENTIFIER --attachment-dir /tmp` - downloads attachment, prints path to stderr
+   - [ ] Verify file exists at printed path with correct content
+   - [ ] `linear issue view IDENTIFIER --attachment-dir ""` - disables download (no files created)
+   - [ ] `linear issue view IDENTIFIER` - default downloads to /tmp
+
+4. Clean up:
+   ```bash
+   rm /tmp/downloaded.txt /tmp/*.txt 2>/dev/null
+   ```
 
 ### Phase 9: Troubleshooting Scenarios
 Verify error handling matches documentation:

@@ -16,6 +16,7 @@ const issue_delete_command = @import("commands/issue_delete.zig");
 const issue_update_command = @import("commands/issue_update.zig");
 const issue_link_command = @import("commands/issue_link.zig");
 const issue_comment_command = @import("commands/issue_comment.zig");
+const download_command = @import("download");
 const search_command = @import("commands/search.zig");
 const projects_command = @import("commands/projects.zig");
 const project_view_command = @import("commands/project_view.zig");
@@ -179,6 +180,18 @@ fn run() !u8 {
 
     if (std.mem.eql(u8, subcommand, "search")) {
         return search_command.run(.{
+            .allocator = allocator,
+            .config = &cfg,
+            .args = sub_args,
+            .json_output = json_output,
+            .retries = opts.retries,
+            .timeout_ms = opts.timeout_ms,
+            .endpoint = opts.endpoint,
+        });
+    }
+
+    if (std.mem.eql(u8, subcommand, "download")) {
+        return download_command.run(.{
             .allocator = allocator,
             .config = &cfg,
             .args = sub_args,
@@ -506,6 +519,11 @@ fn routeHelp(args: [][]const u8, stderr: anytype) !u8 {
         return 0;
     }
 
+    if (std.mem.eql(u8, target, "download")) {
+        try download_command.usage(out);
+        return 0;
+    }
+
     if (std.mem.eql(u8, target, "search")) {
         try search_command.usage(out);
         return 0;
@@ -571,6 +589,7 @@ fn printUsage(writer: anytype) !void {
         \\  me                   Show current user
         \\  teams list           List teams
         \\  search               Search issues by keyword
+        \\  download             Download uploads.linear.app attachments
         \\  projects list        List projects
         \\  issues list          List issues
         \\  issue view|create|update|delete|link|comment  Manage issues

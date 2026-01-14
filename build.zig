@@ -64,6 +64,13 @@ pub fn build(b: *std.Build) void {
     });
     common_mod.addImport("config", config_mod);
     common_mod.addImport("graphql", graphql_mod);
+    const download_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/download.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    download_mod.addImport("config", config_mod);
+    download_mod.addImport("common", common_mod);
     const common_test_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/common.zig"),
         .target = target,
@@ -71,6 +78,13 @@ pub fn build(b: *std.Build) void {
     });
     common_test_mod.addImport("config", config_mod);
     common_test_mod.addImport("graphql", graphql_mock_mod);
+    const download_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/commands/download.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    download_test_mod.addImport("config", config_mod);
+    download_test_mod.addImport("common", common_test_mod);
     const app_main_stub = b.createModule(.{
         .root_source_file = b.path("src/tests/app_main_stub.zig"),
         .target = target,
@@ -81,6 +95,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("graphql", graphql_mod);
     exe.root_module.addImport("printer", printer_mod);
     exe.root_module.addImport("common", common_mod);
+    exe.root_module.addImport("download", download_mod);
 
     const tests_mod = tests.root_module;
     tests_mod.addImport("config", config_mod);
@@ -260,6 +275,7 @@ pub fn build(b: *std.Build) void {
     issue_view_mod.addImport("graphql", graphql_mock_mod);
     issue_view_mod.addImport("printer", printer_mod);
     issue_view_mod.addImport("common", common_test_mod);
+    issue_view_mod.addImport("download", download_test_mod);
     tests_mod.addImport("issue_view_test", issue_view_mod);
 
     const issue_view_online_mod = b.createModule(.{
@@ -271,6 +287,7 @@ pub fn build(b: *std.Build) void {
     issue_view_online_mod.addImport("graphql", graphql_mod);
     issue_view_online_mod.addImport("printer", printer_mod);
     issue_view_online_mod.addImport("common", common_mod);
+    issue_view_online_mod.addImport("download", download_mod);
 
     const me_mod = b.createModule(.{
         .root_source_file = b.path("src/commands/me.zig"),
@@ -548,6 +565,13 @@ pub fn build(b: *std.Build) void {
         });
         npm_common_mod.addImport("config", npm_config_mod);
         npm_common_mod.addImport("graphql", npm_graphql_mod);
+        const npm_download_mod = b.createModule(.{
+            .root_source_file = b.path("src/commands/download.zig"),
+            .target = npm_target,
+            .optimize = npm_optimize,
+        });
+        npm_download_mod.addImport("config", npm_config_mod);
+        npm_download_mod.addImport("common", npm_common_mod);
 
         const npm_exe = b.addExecutable(.{
             .name = "linear",
@@ -563,6 +587,7 @@ pub fn build(b: *std.Build) void {
         npm_exe.root_module.addImport("graphql", npm_graphql_mod);
         npm_exe.root_module.addImport("printer", npm_printer_mod);
         npm_exe.root_module.addImport("common", npm_common_mod);
+        npm_exe.root_module.addImport("download", npm_download_mod);
 
         const dest_dir = b.fmt("npm/linear-cli-{s}", .{t.name});
         const install = b.addInstallArtifact(npm_exe, .{

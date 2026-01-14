@@ -3,6 +3,7 @@ const config = @import("config");
 const graphql = @import("graphql");
 const printer = @import("printer");
 const common = @import("common");
+const download = @import("download");
 
 const Allocator = std.mem.Allocator;
 
@@ -25,6 +26,7 @@ const Options = struct {
     fields: ?[]const u8 = null,
     sub_limit: usize = 10,
     comment_limit: usize = 10,
+    attachment_dir: ?[]const u8 = "/tmp",
 };
 
 const Field = enum { identifier, title, state, assignee, priority, url, created_at, updated_at, description, project, milestone, parent, sub_issues, comments };
@@ -240,6 +242,13 @@ pub fn run(ctx: Context) !u8 {
         break :blk updated_raw;
     } else updated_raw;
     const description = common.getStringField(node, "description");
+    if (opts.attachment_dir) |attachment_dir| {
+        if (description) |desc| {
+            if (desc.len > 0) {
+                downloadAttachments(ctx.allocator, api_key, desc, attachment_dir, ctx.timeout_ms, stderr);
+            }
+        }
+    }
 
     const values = struct {
         identifier: []const u8,
@@ -544,6 +553,19 @@ fn parseOptions(args: [][]const u8) !Options {
             idx += 1;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--attachment-dir")) {
+            if (idx + 1 >= args.len) return error.MissingValue;
+            const value = args[idx + 1];
+            opts.attachment_dir = if (value.len == 0) null else value;
+            idx += 2;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--attachment-dir=")) {
+            const value = arg["--attachment-dir=".len..];
+            opts.attachment_dir = if (value.len == 0) null else value;
+            idx += 1;
+            continue;
+        }
         if (arg.len > 0 and arg[0] == '-') return error.UnknownFlag;
         if (opts.identifier == null) {
             opts.identifier = arg;
@@ -603,7 +625,7 @@ fn appendPair(list: *std.ArrayListUnmanaged(printer.KeyValue), allocator: Alloca
 
 pub fn usage(writer: anytype) !void {
     try writer.print(
-        \\Usage: linear issue view <ID|IDENTIFIER> [--quiet] [--data-only] [--fields LIST] [--human-time] [--sub-limit N] [--comment-limit N] [--help]
+        \\Usage: linear issue view <ID|IDENTIFIER> [--quiet] [--data-only] [--fields LIST] [--human-time] [--sub-limit N] [--comment-limit N] [--attachment-dir DIR] [--help]
         \\Flags:
         \\  --quiet           Print only the identifier
         \\  --data-only       Emit tab-separated fields without formatting (or JSON object with --json)
@@ -611,6 +633,7 @@ pub fn usage(writer: anytype) !void {
         \\  --human-time      Render timestamps as relative values
         \\  --sub-limit N     Sub-issues to fetch when sub_issues field is requested (0 disables; default: 10)
         \\  --comment-limit N Comments to fetch when comments field is requested (0 disables; default: 10)
+        \\  --attachment-dir DIR Download uploads.linear.app attachments to DIR (default: /tmp, use "" to disable)
         \\  --help            Show this help message
         \\Examples:
         \\  linear issue view ENG-123
@@ -618,4 +641,98 @@ pub fn usage(writer: anytype) !void {
         \\  linear issue view ENG-123 --fields identifier,title,comments --json
         \\
     , .{});
+}
+
+fn downloadAttachments(
+    allocator: Allocator,
+    api_key: []const u8,
+    description: []const u8,
+    attachment_dir: []const u8,
+    timeout_ms: u32,
+    stderr: *std.io.Writer,
+) void {
+    var urls = extractUploadUrls(allocator, description) catch |err| {
+        stderr.print("issue view: failed to scan attachments: {s}\n", .{@errorName(err)}) catch {};
+        return;
+    };
+    defer urls.deinit(allocator);
+    if (urls.items.len == 0) return;
+
+    var client = std.http.Client{ .allocator = allocator };
+    defer client.deinit();
+
+    for (urls.items) |url| {
+        const filename = download.extractFilename(url) catch |err| {
+            reportAttachmentError(stderr, api_key, url, err, 0, timeout_ms);
+            continue;
+        };
+        const output_path = std.fs.path.join(allocator, &.{ attachment_dir, filename }) catch |err| {
+            stderr.print("issue view: failed to build attachment path: {s}\n", .{@errorName(err)}) catch {};
+            continue;
+        };
+        defer allocator.free(output_path);
+
+        var file = std.fs.cwd().createFile(output_path, .{ .truncate = true }) catch |err| {
+            stderr.print("issue view: failed to create {s}: {s}\n", .{ output_path, @errorName(err) }) catch {};
+            continue;
+        };
+        defer file.close();
+
+        var status_code: u16 = 0;
+        var file_buf: [0]u8 = undefined;
+        var file_writer = file.writer(&file_buf);
+        download.downloadWithClient(allocator, &client, api_key, url, &file_writer.interface, timeout_ms, &status_code) catch |err| {
+            reportAttachmentError(stderr, api_key, url, err, status_code, timeout_ms);
+            continue;
+        };
+
+        stderr.print("{s}\n", .{output_path}) catch {};
+    }
+}
+
+fn extractUploadUrls(allocator: Allocator, text: []const u8) !std.ArrayListUnmanaged([]const u8) {
+    var matches = std.ArrayListUnmanaged([]const u8){};
+    var idx: usize = 0;
+    while (idx < text.len) {
+        const start = std.mem.indexOfPos(u8, text, idx, download.upload_prefix) orelse break;
+        var end = start + download.upload_prefix.len;
+        while (end < text.len and !isUrlTerminator(text[end])) : (end += 1) {}
+        if (end > start) {
+            try matches.append(allocator, text[start..end]);
+        }
+        idx = end;
+    }
+    return matches;
+}
+
+fn isUrlTerminator(byte: u8) bool {
+    if (std.ascii.isWhitespace(byte)) return true;
+    return switch (byte) {
+        ')', ']', '"', '\'' => true,
+        else => false,
+    };
+}
+
+fn reportAttachmentError(
+    stderr: *std.io.Writer,
+    api_key: []const u8,
+    url: []const u8,
+    err: download.DownloadError,
+    status_code: u16,
+    timeout_ms: u32,
+) void {
+    switch (err) {
+        error.InvalidUrl => stderr.print("issue view: invalid attachment URL: {s}\n", .{url}) catch {},
+        error.MissingFilename => stderr.print("issue view: attachment URL missing filename: {s}\n", .{url}) catch {},
+        error.RequestTimedOut => stderr.print("issue view: attachment download timed out after {d}ms\n", .{timeout_ms}) catch {},
+        error.HttpStatus => {
+            stderr.print("issue view: attachment HTTP status {d} for {s}\n", .{ status_code, url }) catch {};
+            if (status_code == 401) {
+                var buf: [64]u8 = undefined;
+                const redacted = common.redactKey(api_key, &buf);
+                stderr.print("issue view: unauthorized (key {s}); verify LINEAR_API_KEY or run 'linear auth set'\n", .{redacted}) catch {};
+            }
+        },
+        else => stderr.print("issue view: attachment download failed for {s}: {s}\n", .{ url, @errorName(err) }) catch {},
+    }
 }
