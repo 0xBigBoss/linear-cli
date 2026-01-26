@@ -37,6 +37,8 @@ pub const DownloadError = error{
     HttpStatus,
     ResponseReadFailed,
     UnsupportedCompressionMethod,
+    RedirectMissingLocation,
+    TooManyRedirects,
 } || std.mem.Allocator.Error || std.http.Client.RequestError || std.http.Client.Request.ReceiveHeadError || std.http.Reader.BodyError || std.io.Writer.Error;
 
 pub fn run(ctx: Context) !u8 {
@@ -127,6 +129,8 @@ pub fn extractFilename(url: []const u8) DownloadError![]const u8 {
     return trimmed[last_slash + 1 ..];
 }
 
+const max_redirects: u8 = 5;
+
 pub fn downloadWithClient(
     allocator: Allocator,
     client: *std.http.Client,
@@ -137,52 +141,74 @@ pub fn downloadWithClient(
     status_out: *u16,
 ) DownloadError!void {
     if (!isUploadUrl(url)) return error.InvalidUrl;
-    const uri = std.Uri.parse(url) catch return error.InvalidUrl;
-
-    var req = try client.request(.GET, uri, .{
-        .redirect_behavior = .unhandled,
-        .headers = .{
-            .authorization = .{ .override = api_key },
-        },
-    });
-    defer req.deinit();
 
     const start_ms: i64 = std.time.milliTimestamp();
     const deadline_ms = start_ms + @as(i64, @intCast(timeout_ms));
 
-    try req.sendBodiless();
-    if (std.time.milliTimestamp() >= deadline_ms) return error.RequestTimedOut;
-
-    var response = try req.receiveHead(&.{});
-    status_out.* = @intFromEnum(response.head.status);
-
-    if (std.time.milliTimestamp() >= deadline_ms) return error.RequestTimedOut;
-    if (status_out.* < 200 or status_out.* >= 300) return error.HttpStatus;
-
-    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
-        .identity => &.{},
-        .zstd => try allocator.alloc(u8, std.compress.zstd.default_window_len),
-        .deflate, .gzip => try allocator.alloc(u8, std.compress.flate.max_window_len),
-        .compress => return error.UnsupportedCompressionMethod,
-    };
-    defer switch (response.head.content_encoding) {
-        .identity => {},
-        else => allocator.free(decompress_buffer),
-    };
-
-    var transfer_buffer: [transfer_buffer_len]u8 = undefined;
-    var output_buffer: [transfer_buffer_len]u8 = undefined;
-    var decompress: std.http.Decompress = undefined;
-    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+    // First request to Linear with auth - may redirect to CDN
+    var current_uri = std.Uri.parse(url) catch return error.InvalidUrl;
+    var redirect_count: u8 = 0;
+    var include_auth = true;
 
     while (true) {
         if (std.time.milliTimestamp() >= deadline_ms) return error.RequestTimedOut;
-        const amount = reader.readSliceShort(&output_buffer) catch |err| switch (err) {
-            error.ReadFailed => return response.bodyErr() orelse error.ResponseReadFailed,
-            else => return err,
+
+        var req = try client.request(.GET, current_uri, .{
+            .redirect_behavior = .unhandled,
+            .headers = .{
+                .authorization = if (include_auth) .{ .override = api_key } else .omit,
+            },
+        });
+        defer req.deinit();
+
+        try req.sendBodiless();
+        if (std.time.milliTimestamp() >= deadline_ms) return error.RequestTimedOut;
+
+        var response = try req.receiveHead(&.{});
+        status_out.* = @intFromEnum(response.head.status);
+
+        if (std.time.milliTimestamp() >= deadline_ms) return error.RequestTimedOut;
+
+        // Handle redirects (301, 302, 303, 307, 308)
+        if (response.head.status.class() == .redirect) {
+            redirect_count += 1;
+            if (redirect_count > max_redirects) return error.TooManyRedirects;
+
+            const location = response.head.location orelse return error.RedirectMissingLocation;
+            current_uri = std.Uri.parse(location) catch return error.InvalidUrl;
+            // Don't send auth to redirect target (likely CDN)
+            include_auth = false;
+            continue;
+        }
+
+        if (status_out.* < 200 or status_out.* >= 300) return error.HttpStatus;
+
+        const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+            .identity => &.{},
+            .zstd => try allocator.alloc(u8, std.compress.zstd.default_window_len),
+            .deflate, .gzip => try allocator.alloc(u8, std.compress.flate.max_window_len),
+            .compress => return error.UnsupportedCompressionMethod,
         };
-        if (amount == 0) break;
-        try writer.writeAll(output_buffer[0..amount]);
+        defer switch (response.head.content_encoding) {
+            .identity => {},
+            else => allocator.free(decompress_buffer),
+        };
+
+        var transfer_buffer: [transfer_buffer_len]u8 = undefined;
+        var output_buffer: [transfer_buffer_len]u8 = undefined;
+        var decompress: std.http.Decompress = undefined;
+        const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+
+        while (true) {
+            if (std.time.milliTimestamp() >= deadline_ms) return error.RequestTimedOut;
+            const amount = reader.readSliceShort(&output_buffer) catch |err| switch (err) {
+                error.ReadFailed => return response.bodyErr() orelse error.ResponseReadFailed,
+                else => return err,
+            };
+            if (amount == 0) break;
+            try writer.writeAll(output_buffer[0..amount]);
+        }
+        break;
     }
 }
 
@@ -266,6 +292,8 @@ fn reportDownloadError(
         error.MissingFilename => try stderr.print("download: URL missing filename: {s}\n", .{url}),
         error.EmptyOutputPath => try stderr.print("download: output path cannot be empty\n", .{}),
         error.RequestTimedOut => try stderr.print("download: request timed out after {d}ms\n", .{timeout_ms}),
+        error.RedirectMissingLocation => try stderr.print("download: redirect response missing Location header\n", .{}),
+        error.TooManyRedirects => try stderr.print("download: too many redirects (max {d})\n", .{max_redirects}),
         error.HttpStatus => {
             try stderr.print("download: HTTP status {d}\n", .{status_code});
             if (status_code == 401) {
