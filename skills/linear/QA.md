@@ -41,15 +41,25 @@ After the skill documentation has loaded, run these checks and confirm with me:
    - Version should match the current commit (e.g., `v0.1.0` or `v0.1.0-5-gabc1234`)
    - If the repo is dirty (`-dirty` suffix), confirm with me whether this is acceptable
    - If versions don't match, the binary may be stale - rebuild with `zig build`
-2. Run `linear auth test` - is a test API key configured?
-3. Run `linear teams list` - which team should I use for testing?
-4. Do I have permission to create/delete test issues and projects in this workspace?
+2. Do I have permission to create/delete test issues and projects in this workspace?
+
+**Do NOT run `linear config` commands or modify `~/.config/linear/config.json` during QA.** Config resolution and auth are covered by unit tests. Assume the config is already set up correctly.
 
 Stop and wait for my answers before proceeding to Step 3.
 
-## Step 3: Test Scope
+## Step 3: Discover Workspace
 
-After I confirm:
+Run these read-only commands to gather context for the test plan:
+
+1. `linear me` — confirm which user/workspace is active
+2. `linear teams list` — note the available team keys
+3. `linear issues list --team TEAM_KEY --limit 1` — grab a real issue identifier for view/update/link/comment tests
+
+Use the discovered values to substitute placeholders (`TEAM_KEY`, `ID`, `IDENTIFIER`, `ENG-123`, etc.) throughout the test phases below. Do not hard-code or guess values.
+
+## Step 4: Test Scope
+
+After discovery:
 1. Review the expanded skill documentation from Step 1
 2. Verify every documented command produces the expected output
 
