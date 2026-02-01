@@ -104,7 +104,7 @@ pub fn run(ctx: Context) !u8 {
         \\}
     ;
 
-    var response = common.send("project update", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "project update", &client, .{
         .query = mutation,
         .variables = variables,
         .operation_name = "ProjectUpdate",

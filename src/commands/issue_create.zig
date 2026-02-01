@@ -138,7 +138,7 @@ pub fn run(ctx: Context) !u8 {
         \\}
     ;
 
-    var response = common.send("issue create", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "issue create", &client, .{
         .query = mutation,
         .variables = variables,
         .operation_name = "IssueCreate",
@@ -267,7 +267,7 @@ fn resolveTeamId(ctx: Context, client: *graphql.GraphqlClient, value: []const u8
         \\}
     ;
 
-    var response = common.send("issue create", client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "issue create", client, .{
         .query = query,
         .variables = variables,
         .operation_name = "TeamLookup",

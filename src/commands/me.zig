@@ -57,7 +57,7 @@ pub fn run(ctx: Context) !u8 {
         \\}
     ;
 
-    var response = common.send("me", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "me", &client, .{
         .query = query,
         .variables = null,
         .operation_name = "Viewer",

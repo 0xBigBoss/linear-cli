@@ -89,7 +89,7 @@ pub fn run(ctx: Context) !u8 {
     client.timeout_ms = ctx.timeout_ms;
     if (ctx.endpoint) |ep| client.endpoint = ep;
 
-    var response = common.send("gql", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "gql", &client, .{
         .query = query,
         .variables = variables_value,
         .operation_name = opts.operation_name,

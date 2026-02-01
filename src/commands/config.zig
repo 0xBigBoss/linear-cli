@@ -297,7 +297,7 @@ fn validateTeamSelection(ctx: Context, client: *graphql.GraphqlClient, team_valu
         \\}
     ;
 
-    var response = common.send("config set", client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "config set", client, .{
         .query = query,
         .variables = variables,
         .operation_name = "TeamLookup",

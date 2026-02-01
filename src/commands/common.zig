@@ -13,7 +13,12 @@ pub fn requireApiKey(cfg: *config.Config, override_key: ?[]const u8, stderr: any
     return key;
 }
 
-pub fn checkResponse(prefix: []const u8, resp: *const graphql.GraphqlClient.Response, stderr: anytype, api_key: ?[]const u8) !void {
+pub fn checkResponse(
+    prefix: []const u8,
+    resp: *const graphql.GraphqlClient.Response,
+    stderr: anytype,
+    api_key: ?[]const u8,
+) !void {
     if (!resp.isSuccessStatus()) {
         try stderr.print("{s}: HTTP status {d}\n", .{ prefix, resp.status });
         if (resp.firstErrorMessage()) |msg| {
@@ -23,7 +28,10 @@ pub fn checkResponse(prefix: []const u8, resp: *const graphql.GraphqlClient.Resp
             if (api_key) |key| {
                 var buf: [64]u8 = undefined;
                 const redacted = redactKey(key, &buf);
-                try stderr.print("{s}: unauthorized (key {s}); verify LINEAR_API_KEY or run 'linear auth set'\n", .{ prefix, redacted });
+                try stderr.print(
+                    "{s}: unauthorized (key {s}); verify LINEAR_API_KEY or run 'linear auth set'\n",
+                    .{ prefix, redacted },
+                );
             } else {
                 try stderr.print("{s}: unauthorized; verify LINEAR_API_KEY or run 'linear auth set'\n", .{prefix});
             }
@@ -76,9 +84,9 @@ pub fn getBoolField(value: std.json.Value, key: []const u8) ?bool {
 }
 
 pub fn send(
+    allocator: Allocator,
     prefix: []const u8,
     client: *graphql.GraphqlClient,
-    allocator: Allocator,
     req: graphql.GraphqlClient.Request,
     stderr: anytype,
 ) !graphql.GraphqlClient.Response {
@@ -141,7 +149,7 @@ pub fn resolveViewerId(
 ) ![]const u8 {
     const query = "query Viewer { viewer { id } }";
 
-    var response = send(prefix, client, allocator, .{
+    var response = send(allocator, prefix, client, .{
         .query = query,
         .variables = null,
         .operation_name = "Viewer",
@@ -212,19 +220,19 @@ pub fn resolveIssueId(
     defer arena.deinit();
     const var_alloc = arena.allocator();
 
-    var filter = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var filter: std.json.Value = .{ .object = std.json.ObjectMap.init(var_alloc) };
 
-    var team_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
-    var key_cmp = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var team_obj: std.json.Value = .{ .object = std.json.ObjectMap.init(var_alloc) };
+    var key_cmp: std.json.Value = .{ .object = std.json.ObjectMap.init(var_alloc) };
     try key_cmp.object.put("eq", .{ .string = team_key });
     try team_obj.object.put("key", key_cmp);
     try filter.object.put("team", team_obj);
 
-    var number_cmp = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var number_cmp: std.json.Value = .{ .object = std.json.ObjectMap.init(var_alloc) };
     try number_cmp.object.put("eq", .{ .integer = number_i64 });
     try filter.object.put("number", number_cmp);
 
-    var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var variables: std.json.Value = .{ .object = std.json.ObjectMap.init(var_alloc) };
     try variables.object.put("filter", filter);
     try variables.object.put("first", .{ .integer = 1 });
 
@@ -236,7 +244,7 @@ pub fn resolveIssueId(
         \\}
     ;
 
-    var response = send(prefix, client, allocator, .{
+    var response = send(allocator, prefix, client, .{
         .query = query,
         .variables = variables,
         .operation_name = "IssueLookup",
@@ -297,12 +305,12 @@ pub fn resolveProjectId(
     defer arena.deinit();
     const var_alloc = arena.allocator();
 
-    var filter = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
-    var slug_obj = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var filter: std.json.Value = .{ .object = std.json.ObjectMap.init(var_alloc) };
+    var slug_obj: std.json.Value = .{ .object = std.json.ObjectMap.init(var_alloc) };
     try slug_obj.object.put("eq", .{ .string = identifier });
     try filter.object.put("slugId", slug_obj);
 
-    var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
+    var variables: std.json.Value = .{ .object = std.json.ObjectMap.init(var_alloc) };
     try variables.object.put("filter", filter);
     try variables.object.put("first", .{ .integer = 1 });
 
@@ -314,7 +322,7 @@ pub fn resolveProjectId(
         \\}
     ;
 
-    var response = send(prefix, client, allocator, .{
+    var response = send(allocator, prefix, client, .{
         .query = query,
         .variables = variables,
         .operation_name = "ProjectLookup",
@@ -373,7 +381,7 @@ pub fn resolveProjectStatusId(
         \\}
     ;
 
-    var response = send(prefix, client, allocator, .{
+    var response = send(allocator, prefix, client, .{
         .query = query,
         .variables = null,
         .operation_name = "ProjectStatuses",
@@ -485,7 +493,10 @@ test "checkResponse reports auth errors and redacts key" {
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
-    try std.testing.expectError(CommandError.CommandFailed, checkResponse("issues", &resp, buffer.writer(), "abcd1234"));
+    try std.testing.expectError(
+        CommandError.CommandFailed,
+        checkResponse("issues", &resp, buffer.writer(), "abcd1234"),
+    );
     const output = buffer.items;
     try std.testing.expect(std.mem.indexOf(u8, output, "HTTP status 401") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "abcd...1234") != null);

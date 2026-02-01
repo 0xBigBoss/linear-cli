@@ -109,7 +109,7 @@ pub fn run(ctx: Context) !u8 {
     try query_builder.appendSlice(ctx.allocator, "  }\n}\n");
     const query = query_builder.items;
 
-    var response = common.send("project view", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "project view", &client, .{
         .query = query,
         .variables = variables,
         .operation_name = "ProjectView",

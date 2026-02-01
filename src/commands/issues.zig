@@ -265,7 +265,7 @@ pub fn run(ctx: Context) !u8 {
             return 1;
         };
 
-        var response = common.send("issues", &client, ctx.allocator, .{
+        var response = common.send(ctx.allocator, "issues", &client, .{
             .query = query,
             .variables = variables,
             .operation_name = "Issues",
@@ -666,7 +666,7 @@ fn validateTeamSelection(
         \\}
     ;
 
-    var response = common.send("issues list", client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "issues list", client, .{
         .query = query,
         .variables = variables,
         .operation_name = "TeamLookup",
@@ -1220,7 +1220,7 @@ fn parseSort(raw: []const u8) !Sort {
         if (parts.next()) |_| return error.InvalidSort;
     }
 
-    return Sort{
+    return .{
         .field = field,
         .direction = direction,
     };

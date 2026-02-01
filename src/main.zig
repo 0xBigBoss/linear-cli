@@ -28,7 +28,7 @@ const project_issues_command = @import("commands/project_issues.zig");
 const version_string = build_options.version;
 const GlobalOptions = cli.GlobalOptions;
 const Parsed = cli.Parsed;
-const parseGlobal = cli.parseGlobal;
+const parse_global = cli.parseGlobal;
 
 pub fn main() !void {
     const exit_code = run() catch |err| {
@@ -61,7 +61,7 @@ fn run() !u8 {
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
     var stderr = &stderr_writer.interface;
 
-    const parsed = parseGlobal(args) catch |err| {
+    const parsed = parse_global(args) catch |err| {
         try stderr.print("error: {s}\n", .{@errorName(err)});
         var out_buf: [0]u8 = undefined;
         var usage_writer = std.fs.File.stderr().writer(&out_buf);

@@ -151,7 +151,7 @@ pub fn run(ctx: Context) !u8 {
         \\}
     ;
 
-    var response = common.send("projects list", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "projects list", &client, .{
         .query = query,
         .variables = variables,
         .operation_name = "Projects",

@@ -84,7 +84,7 @@ pub fn run(ctx: Context) !u8 {
             \\}
         ;
 
-        var lookup_response = common.send("issue delete", &client, ctx.allocator, .{
+        var lookup_response = common.send(ctx.allocator, "issue delete", &client, .{
             .query = lookup_query,
             .variables = variables,
             .operation_name = "IssueDeleteLookup",
@@ -168,7 +168,7 @@ pub fn run(ctx: Context) !u8 {
         \\}
     ;
 
-    var response = common.send("issue delete", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "issue delete", &client, .{
         .query = mutation,
         .variables = variables,
         .operation_name = "IssueDelete",

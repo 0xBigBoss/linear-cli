@@ -118,7 +118,7 @@ pub fn run(ctx: Context) !u8 {
     client.timeout_ms = ctx.timeout_ms;
     if (ctx.endpoint) |ep| client.endpoint = ep;
 
-    var response = common.send("issue view", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "issue view", &client, .{
         .query = query,
         .variables = variables,
         .operation_name = "IssueView",

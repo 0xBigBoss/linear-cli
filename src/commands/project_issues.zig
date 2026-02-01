@@ -131,7 +131,7 @@ fn runModify(ctx: Context, mode: Mode, args: [][]const u8) !u8 {
         \\}
     ;
 
-    var response = common.send(prefix, &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, prefix, &client, .{
         .query = mutation,
         .variables = variables,
         .operation_name = "IssueUpdate",

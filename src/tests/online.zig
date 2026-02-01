@@ -82,7 +82,7 @@ fn readAll(allocator: Allocator, fd: posix.fd_t) ![]u8 {
 
     var tmp: [256]u8 = undefined;
     while (true) {
-        const count = posix.read(fd, &tmp) catch |err| return err;
+        const count = try posix.read(fd, &tmp);
         if (count == 0) break;
         try buffer.appendSlice(allocator, tmp[0..count]);
     }
@@ -116,7 +116,7 @@ fn fetchDefaultTeamId(allocator: Allocator, api_key: []const u8) !?[]u8 {
     var variables = std.json.Value{ .object = std.json.ObjectMap.init(var_alloc) };
     try variables.object.put("first", .{ .integer = 1 });
 
-    var response = common.send("online setup", &client, allocator, .{
+    var response = common.send(allocator, "online setup", &client, .{
         .query = query,
         .variables = variables,
         .operation_name = "DefaultTeam",

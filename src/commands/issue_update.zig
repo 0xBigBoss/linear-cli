@@ -143,7 +143,7 @@ pub fn run(ctx: Context) !u8 {
         \\}
     ;
 
-    var response = common.send("issue update", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "issue update", &client, .{
         .query = mutation,
         .variables = variables,
         .operation_name = "IssueUpdate",
@@ -270,7 +270,7 @@ pub fn run(ctx: Context) !u8 {
 fn resolveCurrentUserId(ctx: Context, client: *graphql.GraphqlClient, allocator: Allocator, stderr: anytype) ![]const u8 {
     const query = "query Viewer { viewer { id } }";
 
-    var response = common.send("issue update", client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "issue update", client, .{
         .query = query,
         .variables = null,
         .operation_name = "Viewer",
@@ -324,7 +324,7 @@ fn resolveWorkflowStateId(
         \\}
     ;
 
-    var response = common.send("issue update", client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "issue update", client, .{
         .query = query,
         .variables = variables,
         .operation_name = "IssueStateLookup",

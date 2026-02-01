@@ -120,7 +120,7 @@ pub fn run(ctx: Context) !u8 {
         \\}
     ;
 
-    var response = common.send("issue comment", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "issue comment", &client, .{
         .query = mutation,
         .variables = variables,
         .operation_name = "CommentCreate",

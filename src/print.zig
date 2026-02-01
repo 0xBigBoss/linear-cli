@@ -242,7 +242,7 @@ pub fn humanTime(allocator: std.mem.Allocator, iso: []const u8, now_override: ?i
 
     const unit_info = chooseUnit(distance);
     const suffix = if (in_future) "from now" else "ago";
-    return try std.fmt.allocPrint(allocator, "{d}{s} {s}", .{ unit_info.value, unit_info.unit, suffix });
+    return std.fmt.allocPrint(allocator, "{d}{s} {s}", .{ unit_info.value, unit_info.unit, suffix });
 }
 
 const Unit = struct {

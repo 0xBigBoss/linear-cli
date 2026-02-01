@@ -176,7 +176,7 @@ fn runTest(ctx: Context, args: [][]const u8) !u8 {
         \\}
     ;
 
-    var response = common.send("auth test", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "auth test", &client, .{
         .query = query,
         .variables = null,
         .operation_name = "Viewer",

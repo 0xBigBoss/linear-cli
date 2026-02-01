@@ -1356,7 +1356,7 @@ fn readAll(allocator: std.mem.Allocator, fd: posix.fd_t) ![]u8 {
 
     var tmp: [256]u8 = undefined;
     while (true) {
-        const count = posix.read(fd, &tmp) catch |err| return err;
+        const count = try posix.read(fd, &tmp);
         if (count == 0) break;
         try buffer.appendSlice(allocator, tmp[0..count]);
     }

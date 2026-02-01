@@ -139,7 +139,7 @@ pub fn run(ctx: Context) !u8 {
         \\}
     ;
 
-    var response = common.send("search", &client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "search", &client, .{
         .query = query,
         .variables = variables,
         .operation_name = "SearchIssues",
@@ -424,7 +424,7 @@ fn parseIdentifierNumber(value: []const u8) ?i64 {
 fn resolveCurrentUserId(ctx: Context, client: *graphql.GraphqlClient, allocator: Allocator, stderr: anytype) ![]const u8 {
     const query = "query Viewer { viewer { id } }";
 
-    var response = common.send("search", client, ctx.allocator, .{
+    var response = common.send(ctx.allocator, "search", client, .{
         .query = query,
         .variables = null,
         .operation_name = "Viewer",
