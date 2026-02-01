@@ -1,0 +1,9 @@
+pre-commit:
+  parallel: true
+  commands:
+    ziglint:
+      glob: "*.zig"
+      run: ziglint {staged_files}
+    zig-fmt:
+      glob: "*.zig"
+      run: zig fmt --check {staged_files}

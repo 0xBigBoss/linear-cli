@@ -521,6 +521,16 @@ pub fn build(b: *std.Build) void {
     const run_online = b.addRunArtifact(online_tests);
     online_step.dependOn(&run_online.step);
 
+    // Setup step: install git hooks via lefthook
+    const setup_step = b.step("setup", "Install git hooks (requires lefthook)");
+    const lefthook_install = b.addSystemCommand(&.{ "lefthook", "install" });
+    setup_step.dependOn(&lefthook_install.step);
+
+    // Lint step: run ziglint
+    const lint_step = b.step("lint", "Run ziglint static analysis");
+    const ziglint = b.addSystemCommand(&.{"ziglint"});
+    lint_step.dependOn(&ziglint.step);
+
     // npm distribution: cross-compile for all platforms
     // Note: Windows build requires platform-specific fixes for tcsetattr and file permissions
     const npm_targets = [_]struct { name: []const u8, cpu: std.Target.Cpu.Arch, os: std.Target.Os.Tag }{
