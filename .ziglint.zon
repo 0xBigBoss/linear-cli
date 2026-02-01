@@ -1,0 +1,18 @@
+.{
+    .paths = .{ "src", "build.zig" },
+    .rules = .{
+        // Struct literal style (T{} vs .{}) - codebase uses explicit style
+        .Z004 = .{ .enabled = false },
+        // ArrayListUnmanaged and GeneralPurposeAllocator are still valid in Zig 0.15
+        .Z011 = .{ .enabled = false },
+        // Nested pub const types incorrectly flagged as private
+        .Z012 = .{ .enabled = false },
+        .Z015 = .{ .enabled = false },
+        // Allocator parameter order would require breaking all callers
+        .Z023 = .{ .enabled = false },
+        // Line length - many long GraphQL queries
+        .Z024 = .{ .enabled = false },
+        // Empty catch blocks are intentional (stderr writes, resource cleanup)
+        .Z026 = .{ .enabled = false },
+    },
+}
