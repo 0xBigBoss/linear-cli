@@ -126,3 +126,15 @@ Example prompts:
 - "Create an issue in the ENG team titled 'Fix login bug'"
 - "Show me issue ENG-123"
 - "Link ENG-123 as blocking ENG-456"
+
+## Pi package
+
+Install as a [pi package](https://pi.dev/packages) to expose the `linear`
+skill to the pi coding agent:
+
+```bash
+pi install git:git@github.com:0xbigboss/linear-cli.git
+```
+
+The skill shells out to the `linear` binary (build via `zig build`); it does
+not install the binary itself.
