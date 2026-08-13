@@ -133,7 +133,7 @@ Install as a [pi package](https://pi.dev/packages) to expose the `linear`
 skill to the pi coding agent:
 
 ```bash
-pi install git:git@github.com:0xbigboss/linear-cli.git
+pi install git:git@github.com:alleneubank/linear-cli.git
 ```
 
 The skill shells out to the `linear` binary (build via `zig build`); it does
