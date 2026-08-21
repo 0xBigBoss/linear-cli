@@ -106,9 +106,33 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      # Trusted publishing (OIDC). `id-token: write` is the whole auth story:
+      # npm exchanges this short-lived, workflow-scoped GitHub identity for
+      # publish rights, so there is no NPM_TOKEN to expire — which is exactly
+      # how v0.2.11 and v0.3.0 failed to publish.
+      #
+      # Each of the five packages names alleneubank/linear-cli + release.yml as
+      # its trusted publisher on npmjs.com. RENAMING THIS FILE BREAKS PUBLISHING
+      # until every package's trusted-publisher config is updated to match.
+      #
+      # Declared per-job, which drops the workflow-level `contents: write` here:
+      # publishing needs to read the repo, not write it.
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          # Trusted publishing needs Node >= 22.14.0 and npm >= 11.5.1.
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Ensure npm supports trusted publishing
+        # Node 24 already ships npm 11.x; this pins the floor rather than
+        # trusting whatever the runner image happens to bundle.
+        run: |
+          npm install -g npm@latest
+          npm --version
       - uses: actions/download-artifact@v4
         with:
           name: npm-packages
@@ -117,6 +141,4 @@ jobs:
         # upload-artifact does not preserve the mode; the packaged binary must
         # stay executable or the npm wrapper spawns a non-executable file.
         run: chmod +x npm/linear-cli-*/linear
-      - env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: ./scripts/publish-npm.sh ${GITHUB_REF_NAME#v}
+      - run: ./scripts/publish-npm.sh ${GITHUB_REF_NAME#v}
