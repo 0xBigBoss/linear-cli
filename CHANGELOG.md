@@ -3,6 +3,26 @@
 Notable changes per release. Versions before 0.3.0 are recorded in the
 [GitHub releases](https://github.com/alleneubank/linear-cli/releases).
 
+## Unreleased
+
+### Release engineering
+
+- npm publishing moves to **trusted publishing (OIDC)**. The release workflow
+  presents a short-lived, workflow-scoped GitHub identity via
+  `id-token: write` and npm exchanges it for publish rights, so there is no
+  long-lived `NPM_TOKEN`. The token had gone stale and silently broke npm
+  publishing for two releases (v0.2.11 and v0.3.0 both failed with a registry
+  404), while the tag, the GitHub release, and the manifests all looked
+  correct.
+- `scripts/publish-npm.sh` uses `npm publish` rather than `bun publish`: bun
+  cannot present an OIDC identity (oven-sh/bun#22423) and fails with "missing
+  authentication". `bunfig.toml` existed only to feed bun the token and is
+  removed.
+- Publishing from a public repo with OIDC also produces provenance
+  attestations automatically.
+- `flake.nix` provides a dev shell pinned to Zig 0.16.0 with `ziglint` and
+  `jq`, so `zig build lint` works instead of failing with `FileNotFound`.
+
 ## 0.3.0
 
 The first release since v0.2.11, covering the Zig 0.16 migration, a
