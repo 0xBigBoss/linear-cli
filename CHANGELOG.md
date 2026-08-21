@@ -3,7 +3,11 @@
 Notable changes per release. Versions before 0.3.0 are recorded in the
 [GitHub releases](https://github.com/alleneubank/linear-cli/releases).
 
-## Unreleased
+## 0.3.1
+
+The first release published through trusted publishing. Content is identical to
+0.3.0 apart from the lint fixes below — 0.3.0 reached GitHub but never reached
+npm, because the release token had expired.
 
 ### Release engineering
 
