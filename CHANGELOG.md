@@ -3,6 +3,17 @@
 Notable changes per release. Versions before 0.3.0 are recorded in the
 [GitHub releases](https://github.com/alleneubank/linear-cli/releases).
 
+## 0.3.2
+
+### Fixed
+
+- The four npm platform packages had no `repository` field. Trusted publishing
+  generates sigstore provenance automatically, and npm rejects the upload with
+  a 422 when `repository.url` does not match the repo the provenance came from,
+  so the v0.3.1 publish failed after the tag and GitHub release had already
+  gone green. `scripts/check-versions.sh` now checks `repository.url` on every
+  npm manifest, which fails the release before it publishes anything.
+
 ## 0.3.1
 
 The first release published through trusted publishing. Content is identical to

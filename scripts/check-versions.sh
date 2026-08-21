@@ -12,6 +12,13 @@
 #   .claude-plugin/plugin.json    Claude Code plugin
 #   npm/*/package.json            npm dist packages
 #   npm/linear-cli optionalDependencies pins
+#   npm/*/package.json repository.url
+#
+# The repository check is here because trusted publishing generates sigstore
+# provenance, and npm rejects the upload when package.json's repository.url
+# does not match the repo the provenance came from. The four platform packages
+# had no repository field at all, which failed the v0.3.1 publish with a 422
+# AFTER the tag, the GitHub release, and every other gate had gone green.
 #
 # Usage: check-versions.sh [--expect <version>]
 #   --expect pins every manifest to that version (CI passes the tag).
@@ -59,6 +66,17 @@ while IFS= read -r pin; do
         report "npm/linear-cli optionalDependencies['$dep']: $v != $reference"
     fi
 done < <(jq -r '.optionalDependencies // {} | to_entries[] | "\(.key)=\(.value)"' npm/linear-cli/package.json)
+
+# Provenance: npm compares this against the OIDC claim and 422s on a mismatch.
+expected_repo="git+https://github.com/alleneubank/linear-cli.git"
+for f in npm/*/package.json; do
+    url="$(jq -r '.repository.url // empty' "$f")"
+    if [[ -z "$url" ]]; then
+        report "$f: no .repository.url (npm rejects provenance without it)"
+    elif [[ "$url" != "$expected_repo" ]]; then
+        report "$f: repository.url is '$url', expected '$expected_repo'"
+    fi
+done
 
 if [[ $fail -ne 0 ]]; then
     echo "FAIL: manifests disagree${expect:+ with tag $expect}" >&2
