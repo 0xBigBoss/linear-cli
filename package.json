@@ -1,6 +1,6 @@
 {
   "name": "linear-cli",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Pi package for @0xbigboss/linear-cli: Linear issue/team/project management via the linear CLI. Exposes the linear skill.",
   "license": "MIT",
   "keywords": [
