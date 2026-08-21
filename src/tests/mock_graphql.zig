@@ -70,6 +70,7 @@ pub const MockServer = struct {
             entry.value_ptr.*.deinit();
         }
         self.fixtures.deinit();
+        self.* = undefined;
     }
 
     pub fn set(self: *MockServer, operation: []const u8, payload: []const u8) !void {
@@ -244,6 +245,7 @@ pub const GraphqlClient = struct {
 
         pub fn deinit(self: *Response) void {
             self.parsed.deinit();
+            self.* = undefined;
         }
     };
 
@@ -257,7 +259,7 @@ pub const GraphqlClient = struct {
     }
 
     pub fn deinit(self: *GraphqlClient) void {
-        _ = self;
+        self.* = undefined;
     }
 
     pub fn send(self: *GraphqlClient, allocator: Allocator, req: Request) !Response {

@@ -22,6 +22,10 @@ Notable changes per release. Versions before 0.3.0 are recorded in the
   attestations automatically.
 - `flake.nix` provides a dev shell pinned to Zig 0.16.0 with `ziglint` and
   `jq`, so `zig build lint` works instead of failing with `FileNotFound`.
+- The 14 findings that surfaced the first time ziglint actually ran are fixed
+  (11 `deinit` bodies now poison the struct with `self.* = undefined`, plus one
+  `@This()` binding and two error-literal returns), and CI runs `zig build
+  lint` through the flake so the tree stays at zero.
 
 ## 0.3.0
 

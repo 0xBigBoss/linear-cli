@@ -31,6 +31,7 @@ const Env = struct {
         if (self.issue_id) |value| allocator.free(value);
         if (self.project_id) |value| allocator.free(value);
         if (self.milestone_id) |value| allocator.free(value);
+        self.* = undefined;
     }
 };
 
