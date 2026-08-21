@@ -1,0 +1,52 @@
+# CI: the offline verifier every push has to clear.
+#
+# Deliberately not running ziglint — it is a `zig build lint` step that shells
+# out to a binary this workflow would have to build from source on every run,
+# and it is advisory. `zig fmt --check` and the unit suite are the floors.
+#
+# The online suite (`zig build online`) is not here on purpose: it needs a real
+# LINEAR_API_KEY and mutates a live workspace.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build.zig derives --version from `git describe --tags`; a shallow
+          # clone makes it report a bare hash.
+          fetch-depth: 0
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          # Keep in lockstep with the release workflow and README.
+          version: 0.16.0
+
+      - name: Check formatting
+        run: zig fmt --check build.zig src
+
+      - name: Unit tests
+        run: zig build test
+
+      - name: Version manifests agree
+        run: ./scripts/check-versions.sh
+
+  cross-build:
+    # The npm dist targets are cross-compiled and never exercised by `zig build
+    # test`, so a target-specific break (libc, tcsetattr, file modes) only shows
+    # up at release time. Build them on every push instead.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: zig build npm

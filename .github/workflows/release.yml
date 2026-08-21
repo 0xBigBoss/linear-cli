@@ -1,26 +1,107 @@
+# Release: cut on a pushed v* tag.
+#
+# Two distribution channels, one tag:
+#   1. npm  — @0xbigboss/linear-cli plus four platform packages.
+#   2. GitHub release assets — per-platform tarballs consumed by mise's
+#      `github:` backend (dotfiles config/.config/mise/config.toml).
+#
+# Asset naming mirrors zmx and alleneubank/agent-statusline
+# (`linear-<version>-<os>-<arch>.tar.gz` + `.sha256`), which is the shape mise
+# already resolves per platform. Do not add an asset_pattern on the consuming
+# side: mise's per-arch matching handles this layout, and a pattern REPLACES
+# that matching rather than narrowing it.
+#
+# Linux assets are musl-static so they run on any distro; the npm packages keep
+# their gnu builds (npm installs land on a host with a libc that matches).
+#
+# No code signing: Zig ad-hoc signs macOS binaries at link time, and mise
+# downloads carry no quarantine xattr, so Gatekeeper never engages.
 name: Release
 on:
   push:
     tags: ["v*"]
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # build.zig derives --version from `git describe --tags`. Without the
+          # tag history the published binary reports a bare commit hash.
+          fetch-depth: 0
+
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+
+      # Fail before publishing rather than after. The tag names the npm
+      # packages and the release assets; a manifest that disagrees ships a
+      # release whose parts describe different versions.
+      - name: Check version consistency
+        run: ./scripts/check-versions.sh --expect "${GITHUB_REF_NAME#v}"
+
       - run: zig build npm
+
       - name: Copy binaries to npm packages
         run: |
           for p in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
             cp zig-out/npm/linear-cli-${p}/linear npm/linear-cli-${p}/
           done
+
+      - name: Build GitHub release tarballs
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          # asset label -> zig target triple
+          for pair in \
+            "macos-aarch64 aarch64-macos" \
+            "macos-x86_64 x86_64-macos" \
+            "linux-aarch64 aarch64-linux-musl" \
+            "linux-x86_64 x86_64-linux-musl"; do
+            label="${pair%% *}"
+            target="${pair##* }"
+            zig build -Doptimize=ReleaseSafe -Dtarget="$target"
+            asset="linear-${version}-${label}.tar.gz"
+            tar -C zig-out/bin -czf "dist/$asset" linear
+            (cd dist && sha256sum "$asset" > "$asset.sha256")
+          done
+          ls -l dist
+
       - uses: actions/upload-artifact@v4
         with:
           name: npm-packages
           path: npm/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Create release with assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Create the release for this tag, or attach assets if it already
+          # exists (e.g. a hand-drafted release).
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes dist/* \
+            || gh release upload "$GITHUB_REF_NAME" dist/* --clobber
 
   publish:
     needs: build
@@ -32,6 +113,10 @@ jobs:
         with:
           name: npm-packages
           path: npm
+      - name: Restore executable bits
+        # upload-artifact does not preserve the mode; the packaged binary must
+        # stay executable or the npm wrapper spawns a non-executable file.
+        run: chmod +x npm/linear-cli-*/linear
       - env:
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: ./scripts/publish-npm.sh ${GITHUB_REF_NAME#v}
