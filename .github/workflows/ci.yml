@@ -1,9 +1,5 @@
 # CI: the offline verifier every push has to clear.
 #
-# Deliberately not running ziglint — it is a `zig build lint` step that shells
-# out to a binary this workflow would have to build from source on every run,
-# and it is advisory. `zig fmt --check` and the unit suite are the floors.
-#
 # The online suite (`zig build online`) is not here on purpose: it needs a real
 # LINEAR_API_KEY and mutates a live workspace.
 name: ci
@@ -36,6 +32,20 @@ jobs:
 
       - name: Version manifests agree
         run: ./scripts/check-versions.sh
+
+  lint:
+    # ziglint runs through the flake dev shell, which is the only place the
+    # binary exists — `zig build lint` shells out to it and dies with
+    # FileNotFound otherwise. The tree is at zero findings; this is the floor
+    # that keeps it there.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix develop -c zig build lint
 
   cross-build:
     # The npm dist targets are cross-compiled and never exercised by `zig build

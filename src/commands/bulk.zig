@@ -73,8 +73,7 @@ pub const Targets = struct {
     pub fn deinit(self: *Targets) void {
         self.allocator.free(self.items);
         if (self.storage) |buf| self.allocator.free(buf);
-        self.items = &.{};
-        self.storage = null;
+        self.* = undefined;
     }
 };
 

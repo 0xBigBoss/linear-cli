@@ -150,6 +150,7 @@ pub const Config = struct {
             self.allocator.free(entry.value_ptr.*);
         }
         self.team_cache.deinit();
+        self.* = undefined;
     }
 
     pub fn resolveApiKey(self: *Config, override_key: ?[]const u8) ![]const u8 {

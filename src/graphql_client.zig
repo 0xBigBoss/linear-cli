@@ -93,6 +93,7 @@ pub const GraphqlClient = struct {
 
     pub fn deinit(self: *GraphqlClient) void {
         shared_client.release(self.io);
+        self.* = undefined;
     }
 
     pub const Request = struct {
@@ -149,6 +150,10 @@ pub const GraphqlClient = struct {
 
         pub fn deinit(self: *Response) void {
             self.parsed.deinit();
+            // Every parsed field is a slice into `parsed`'s arena, so any read
+            // after this point was already use-after-free. Poisoning makes it
+            // crash instead of returning plausible bytes.
+            self.* = undefined;
         }
     };
 
@@ -171,19 +176,19 @@ pub const GraphqlClient = struct {
         while (true) : (attempt += 1) {
             response_writer.clearRetainingCapacity();
 
-            if (std.Io.Clock.real.now(self.io).toMilliseconds() >= deadline_ms) return Error.RequestTimedOut;
+            if (std.Io.Clock.real.now(self.io).toMilliseconds() >= deadline_ms) return error.RequestTimedOut;
 
             const attempt_result = try performRequest(self, payload_bytes, &response_writer.writer);
             rate_limit = attempt_result.rate_limit;
             const status_code: u16 = attempt_result.status;
 
             const after_ms: i64 = std.Io.Clock.real.now(self.io).toMilliseconds();
-            if (after_ms >= deadline_ms) return Error.RequestTimedOut;
+            if (after_ms >= deadline_ms) return error.RequestTimedOut;
 
             const can_retry = shouldRetry(status_code) and attempt + 1 < max_attempts;
             if (can_retry) {
                 const remaining_ms = deadline_ms - after_ms;
-                const delay_ms = computeDelayMs(attempt, rate_limit, remaining_ms, &random) orelse return Error.RequestTimedOut;
+                const delay_ms = computeDelayMs(attempt, rate_limit, remaining_ms, &random) orelse return error.RequestTimedOut;
                 logRetry(self.io, status_code, attempt + 2, max_attempts, delay_ms);
                 try self.io.sleep(.fromMilliseconds(@intCast(delay_ms)), .awake);
                 continue;

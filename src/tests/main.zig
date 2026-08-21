@@ -9532,6 +9532,7 @@ const FakeProcess = struct {
         self.calls.deinit(self.allocator);
         for (self.inputs.items) |input| self.allocator.free(input);
         self.inputs.deinit(self.allocator);
+        self.* = undefined;
     }
 
     fn runner(self: *FakeProcess) git.Runner {
@@ -12036,10 +12037,12 @@ test "bulk execute records every outcome and keeps running" {
     const allocator = std.testing.allocator;
 
     const Recorder = struct {
+        const Self = @This();
+
         seen: *std.ArrayListUnmanaged([]const u8),
         allocator: std.mem.Allocator,
 
-        fn call(self: @This(), index: usize, target: []const u8) !bulk.Outcome {
+        fn call(self: Self, index: usize, target: []const u8) !bulk.Outcome {
             _ = index;
             try self.seen.append(self.allocator, target);
             return if (std.mem.eql(u8, target, "bad")) .failed else .succeeded;
@@ -12501,6 +12504,7 @@ const ChainResult = struct {
     fn deinit(self: *ChainResult) void {
         self.cfg.deinit();
         self.diagnostics.deinit();
+        self.* = undefined;
     }
 
     fn stderrText(self: *ChainResult) []const u8 {
@@ -13224,6 +13228,7 @@ const ScratchConfigFixture = struct {
         self.tmp.cleanup();
         restoreEnv(env_name_z, self.saved_key_env, self.allocator);
         restoreEnv(config_env_name_z, self.saved_config_env, self.allocator);
+        self.* = undefined;
     }
 
     fn readConfig(self: *ScratchConfigFixture) ![]u8 {
