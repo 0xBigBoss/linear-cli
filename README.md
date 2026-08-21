@@ -2,8 +2,44 @@
 
 Single-binary Linear client built with Zig 0.16.0. Uses stdlib only, defaults to human-readable tables with a `--json` override, and stores auth securely at `~/.config/linear/config.json` (0600). Use `linear help <command>` to see command-specific flags and examples.
 
+## Install
+
+One owner per machine: the npm wrapper, mise, and a hand-placed binary all put
+`linear` on PATH and will shadow each other.
+
+**npm** — any platform with node:
+```bash
+npm install -g @0xbigboss/linear-cli
+```
+
+**mise** — tracks the GitHub release assets, so every host on a fleet resolves
+the same pinned build:
+```toml
+# ~/.config/mise/config.toml
+[tools]
+"github:alleneubank/linear-cli" = { version = "latest", exe = "linear" }
+```
+Then `mise install`. `exe` is required: the repo is `linear-cli`, the binary is
+`linear`.
+
+**Direct download** — each release carries
+`linear-<version>-<os>-<arch>.tar.gz` plus a `.sha256` sidecar for macOS
+(aarch64, x86_64) and Linux (aarch64, x86_64; statically linked against musl,
+so any distro works). The tarball holds one root `linear` executable.
+
+**From source** — Zig 0.16.0, stdlib only:
+```bash
+zig build -Doptimize=ReleaseSafe   # -> zig-out/bin/linear
+```
+
+Then configure a key (see [Config & Auth](#config--auth)) and check it:
+```bash
+linear config set credential_helper "op read op://<vault>/<item>/<field>"
+linear auth test
+```
+
 ## Build & Test
-- Build: `zig build -Drelease-safe` (debug is default). Binary installs to `zig-out/bin/linear`.
+- Build: `zig build -Doptimize=ReleaseSafe` (debug is default). Binary installs to `zig-out/bin/linear`.
 - Tests: `zig build test`. Online suite runs with `LINEAR_ONLINE_TESTS=1`: `LINEAR_ONLINE_TESTS=1 LINEAR_TEST_TEAM_ID=<TEAM_ID> zig build online` (requires `LINEAR_API_KEY`; optional `LINEAR_TEST_ISSUE_ID`, `LINEAR_TEST_PROJECT_ID`, `LINEAR_TEST_MILESTONE_ID`; opt-in mutations with `LINEAR_TEST_ALLOW_MUTATIONS=1`).
 
 ## Manual QA (Live API)
@@ -238,7 +274,7 @@ linear auth set  # configure your API key
 
 **1. Add the marketplace:**
 ```
-/plugin marketplace add https://github.com/0xbigboss/linear-cli
+/plugin marketplace add https://github.com/alleneubank/linear-cli
 ```
 
 **2. Install the plugin:**

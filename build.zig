@@ -33,6 +33,13 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tests/main.zig"),
             .target = target,
             .optimize = optimize,
+            // The env-mutation tests call libc `setenv`/`unsetenv` and rebuild
+            // their view of the environment from `std.c.environ`, because 0.16
+            // hands `main` a snapshot of `envp` that goes stale the moment libc
+            // reallocates `environ`. macOS links libSystem implicitly, so this
+            // only ever failed on Linux — which is why it survived until CI ran
+            // there. The exe itself stays libc-free.
+            .link_libc = true,
         }),
     });
     tests.root_module.addOptions("build_options", build_options);

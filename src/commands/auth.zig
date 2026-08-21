@@ -6,9 +6,6 @@ const common = @import("common");
 const credentials = @import("credentials");
 const process = @import("process");
 const builtin = @import("builtin");
-const c = @cImport({
-    @cInclude("termios.h");
-});
 
 const Allocator = std.mem.Allocator;
 

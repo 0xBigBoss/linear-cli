@@ -1,19 +1,19 @@
 {
   "name": "@0xbigboss/linear-cli",
-  "version": "0.2.11",
+  "version": "0.3.0",
   "description": "Linear CLI built with Zig",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xbigboss/linear-cli.git"
+    "url": "git+https://github.com/alleneubank/linear-cli.git"
   },
   "bin": {
     "linear": "bin.js"
   },
   "optionalDependencies": {
-    "@0xbigboss/linear-cli-darwin-arm64": "0.2.11",
-    "@0xbigboss/linear-cli-darwin-x64": "0.2.11",
-    "@0xbigboss/linear-cli-linux-x64": "0.2.11",
-    "@0xbigboss/linear-cli-linux-arm64": "0.2.11"
+    "@0xbigboss/linear-cli-darwin-arm64": "0.3.0",
+    "@0xbigboss/linear-cli-darwin-x64": "0.3.0",
+    "@0xbigboss/linear-cli-linux-x64": "0.3.0",
+    "@0xbigboss/linear-cli-linux-arm64": "0.3.0"
   }
 }
